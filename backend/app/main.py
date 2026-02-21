@@ -1,35 +1,42 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Optional, Union
 import re
+from typing import Any, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
-from .db import CaptureDatabase
+from .db import CaptureDatabase, DbComplianceError, DbConflictError, DbNotFoundError
 from .ingest import build_structured_job_posting
+from .runtime_generation import SqliteGenerateRepository
 from .schemas import validate_capture_payload
+
+from autoapply.api import ApiError, handle_generate_resume_version
+from autoapply.artifacts import ArtifactWriter
+from autoapply.compliance import ComplianceGate
+from autoapply.contracts import GenerateResumeRequest
+from autoapply.service import ResumeGenerationService
+from autoapply.tailoring import TailoringEngine
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "autoapply.db"
 _APPLICATION_ID_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)$")
 _APPLICATION_STATUS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/status$")
 _APPLICATION_RESUME_VERSIONS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions$")
+_APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions/generate$")
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
-_ALLOWED_TRANSITIONS = {
-    "captured": {"drafting", "rejected"},
-    "drafting": {"ready_to_apply", "captured", "rejected"},
-    "ready_to_apply": {"applied", "drafting", "rejected"},
-    "applied": {"interview", "offer", "rejected"},
-    "interview": {"offer", "rejected"},
-    "offer": set(),
-    "rejected": set(),
+_ALLOWED_STATUSES = {
+    "captured",
+    "drafting",
+    "ready_to_apply",
+    "applied",
+    "interview",
+    "rejected",
+    "offer",
 }
-
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, body: dict[str, Any]) -> None:
@@ -41,8 +48,14 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, body: dict[str,
     handler.wfile.write(payload)
 
 
-
 def _build_handler(capture_db: CaptureDatabase):
+    generation_service = ResumeGenerationService(
+        repository=SqliteGenerateRepository(capture_db),
+        tailoring_engine=TailoringEngine(),
+        artifact_writer=ArtifactWriter(Path(__file__).resolve().parents[2]),
+        compliance_gate=ComplianceGate(),
+    )
+
     class CaptureRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -71,15 +84,21 @@ def _build_handler(capture_db: CaptureDatabase):
         def do_PATCH(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             match = _APPLICATION_STATUS_PATTERN.match(parsed.path)
-            if not match:
+            if match is None:
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
                 return
             self._handle_update_application_status(match.group(1))
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+
             if parsed.path == "/api/v1/jobs/capture":
                 self._handle_capture()
+                return
+
+            match = _APPLICATION_GENERATE_PATTERN.match(parsed.path)
+            if match:
+                self._handle_generate_resume_version(match.group(1))
                 return
 
             match = _RESUME_VERSION_APPROVE_PATTERN.match(parsed.path)
@@ -92,6 +111,9 @@ def _build_handler(capture_db: CaptureDatabase):
         def _handle_capture(self) -> None:
             body = self._read_json_body()
             if body is None:
+                return
+            if not isinstance(body, dict):
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
                 return
 
             capture, errors = validate_capture_payload(body)
@@ -136,7 +158,7 @@ def _build_handler(capture_db: CaptureDatabase):
                 return
 
             status = params.get("status", [None])[0]
-            if status is not None and status not in _ALLOWED_TRANSITIONS:
+            if status is not None and status not in _ALLOWED_STATUSES:
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -163,13 +185,10 @@ def _build_handler(capture_db: CaptureDatabase):
             )
 
         def _handle_get_application(self, application_id: str) -> None:
-            application = capture_db.get_application(application_id)
-            if application is None:
-                _json_response(
-                    self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"application '{application_id}' not found"},
-                )
+            try:
+                application = capture_db.get_application(application_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
 
             latest = capture_db.get_latest_resume_version(application_id)
@@ -186,137 +205,127 @@ def _build_handler(capture_db: CaptureDatabase):
             payload = self._read_json_body()
             if payload is None:
                 return
+            if not isinstance(payload, dict):
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return
 
-            target_status = payload.get("target_status") if isinstance(payload, dict) else None
-            if not isinstance(target_status, str):
+            target_status = payload.get("target_status")
+            if not isinstance(target_status, str) or not target_status.strip():
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
-                    {"detail": "invalid request payload", "errors": [{"field": "target_status", "message": "is required"}]},
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "target_status", "message": "is required"}],
+                    },
                 )
                 return
 
-            application = capture_db.get_application(application_id)
-            if application is None:
-                _json_response(
-                    self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"application '{application_id}' not found"},
-                )
+            try:
+                updated = capture_db.set_application_status(application_id, target_status.strip())
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
+                return
+            except DbConflictError as err:
+                _json_response(self, HTTPStatus.CONFLICT, {"detail": str(err)})
+                return
+            except DbComplianceError as err:
+                _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
                 return
 
-            current_status = str(application["status"])
-            if target_status not in _ALLOWED_TRANSITIONS:
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {"detail": f"invalid target status '{target_status}'"},
-                )
-                return
-
-            if target_status not in _ALLOWED_TRANSITIONS.get(current_status, set()):
-                _json_response(
-                    self,
-                    HTTPStatus.CONFLICT,
-                    {"detail": f"invalid transition '{current_status}' -> '{target_status}'"},
-                )
-                return
-
-            if target_status == "ready_to_apply":
-                latest = capture_db.get_latest_resume_version(application_id)
-                latest_approved = bool(latest and latest.get("approval", {}).get("approved") is True)
-                if not latest_approved:
-                    _json_response(
-                        self,
-                        HTTPStatus.UNPROCESSABLE_ENTITY,
-                        {
-                            "detail": (
-                                "approval gate failed: latest resume version must be approved "
-                                "before ready_to_apply"
-                            )
-                        },
-                    )
-                    return
-
-            updated = capture_db.update_application_status(
-                application_id,
-                target_status,
-                updated_at=_utc_now_iso(),
-            )
             latest = capture_db.get_latest_resume_version(application_id)
             _json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    **(updated or application),
+                    **updated,
+                    "application": updated,
                     "latest_resume_version": latest,
                 },
             )
 
         def _handle_get_resume_versions_for_application(self, application_id: str) -> None:
-            application = capture_db.get_application(application_id)
-            if application is None:
-                _json_response(
-                    self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"application '{application_id}' not found"},
-                )
+            try:
+                capture_db.get_application(application_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
 
             versions = capture_db.list_resume_versions(application_id)
             _json_response(self, HTTPStatus.OK, {"items": versions})
 
         def _handle_get_resume_version(self, resume_version_id: str) -> None:
-            resume_version = capture_db.get_resume_version(resume_version_id)
-            if resume_version is None:
-                _json_response(
-                    self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"resume_version '{resume_version_id}' not found"},
-                )
+            try:
+                resume_version = capture_db.get_resume_version(resume_version_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
             _json_response(self, HTTPStatus.OK, resume_version)
 
-        def _handle_approve_resume_version(self, resume_version_id: str) -> None:
-            current = capture_db.get_resume_version(resume_version_id)
-            if current is None:
+        def _handle_generate_resume_version(self, application_id: str) -> None:
+            payload = self._read_json_body()
+            if payload is None:
+                return
+            if not isinstance(payload, dict):
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return
+
+            template_id = payload.get("template_id")
+            if not isinstance(template_id, str) or not template_id.strip():
                 _json_response(
                     self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"resume_version '{resume_version_id}' not found"},
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "template_id", "message": "is required"}],
+                    },
                 )
                 return
 
-            application_id = str(current["application_id"])
-            application = capture_db.get_application(application_id)
-            if application is None:
-                _json_response(
-                    self,
-                    HTTPStatus.NOT_FOUND,
-                    {"detail": f"application '{application_id}' not found"},
+            try:
+                response_payload = handle_generate_resume_version(
+                    generation_service,
+                    application_id,
+                    GenerateResumeRequest(template_id=template_id.strip()),
                 )
+            except ApiError as err:
+                _json_response(self, err.status_code, {"detail": err.detail})
+                return
+
+            _json_response(self, HTTPStatus.CREATED, response_payload)
+
+        def _handle_approve_resume_version(self, resume_version_id: str) -> None:
+            try:
+                current = capture_db.get_resume_version(resume_version_id)
+                approved = capture_db.approve_resume_version(resume_version_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
+                return
+            except DbComplianceError as err:
+                _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
+                return
+
+            application_id = str(current["application_id"])
+            try:
+                application = capture_db.get_application(application_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
 
             current_status = str(application["status"])
             if current_status != "ready_to_apply":
-                if "ready_to_apply" not in _ALLOWED_TRANSITIONS.get(current_status, set()):
-                    _json_response(
-                        self,
-                        HTTPStatus.CONFLICT,
-                        {"detail": f"invalid transition '{current_status}' -> 'ready_to_apply'"},
-                    )
+                try:
+                    capture_db.set_application_status(application_id, "ready_to_apply")
+                except DbConflictError as err:
+                    _json_response(self, HTTPStatus.CONFLICT, {"detail": str(err)})
+                    return
+                except DbComplianceError as err:
+                    _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
                     return
 
-            approved = capture_db.approve_resume_version(resume_version_id, approved_at=_utc_now_iso())
-            if current_status != "ready_to_apply":
-                capture_db.update_application_status(
-                    application_id,
-                    "ready_to_apply",
-                    updated_at=_utc_now_iso(),
-                )
-            _json_response(self, HTTPStatus.OK, approved or current)
+            _json_response(self, HTTPStatus.OK, approved)
 
-        def _read_json_body(self) -> Optional[dict[str, Any]]:
+        def _read_json_body(self) -> object | None:
             content_length = self.headers.get("Content-Length", "0")
             try:
                 length = int(content_length)
@@ -325,8 +334,11 @@ def _build_handler(capture_db: CaptureDatabase):
                 return None
 
             raw_body = self.rfile.read(length)
+            if len(raw_body) == 0:
+                return {}
+
             try:
-                body = json.loads(raw_body.decode("utf-8"))
+                return json.loads(raw_body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 _json_response(
                     self,
@@ -334,16 +346,6 @@ def _build_handler(capture_db: CaptureDatabase):
                     {"detail": "invalid request payload", "errors": [{"field": "body", "message": "invalid JSON"}]},
                 )
                 return None
-
-            if not isinstance(body, dict):
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {"detail": "invalid request payload", "errors": [{"field": "body", "message": "must be a JSON object"}]},
-                )
-                return None
-
-            return body
 
         def _read_positive_int(self, value: str, *, default: int) -> Optional[int]:
             if value is None or value == "":
@@ -362,7 +364,6 @@ def _build_handler(capture_db: CaptureDatabase):
     return CaptureRequestHandler
 
 
-
 def create_server(
     db_path: Optional[Union[str, Path]] = None,
     host: str = "127.0.0.1",
@@ -373,7 +374,6 @@ def create_server(
     return ThreadingHTTPServer((host, port), _build_handler(db))
 
 
-
 def run_server(
     db_path: Optional[Union[str, Path]] = None,
     host: str = "127.0.0.1",
@@ -381,10 +381,6 @@ def run_server(
 ) -> None:
     server = create_server(db_path=db_path, host=host, port=port)
     server.serve_forever()
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 if __name__ == "__main__":

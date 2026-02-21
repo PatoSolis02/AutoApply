@@ -8,6 +8,37 @@ from typing import Any, Dict, Optional, Tuple, Union
 from uuid import uuid4
 
 
+class DbError(Exception):
+    """Base db runtime error."""
+
+
+class DbNotFoundError(DbError):
+    """Raised when a required row is missing."""
+
+
+class DbConflictError(DbError):
+    """Raised for contract invalid transitions."""
+
+
+class DbComplianceError(DbError):
+    """Raised for compliance/approval gate failures."""
+
+
+_ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "captured": {"drafting", "rejected"},
+    "drafting": {"ready_to_apply", "captured", "rejected"},
+    "ready_to_apply": {"applied", "drafting", "rejected"},
+    "applied": {"interview", "offer", "rejected"},
+    "interview": {"offer", "rejected"},
+    "offer": set(),
+    "rejected": set(),
+}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class CaptureDatabase:
     def __init__(self, db_path: Union[str, Path]):
         self.db_path = Path(db_path)
@@ -38,7 +69,7 @@ class CaptureDatabase:
         captured_at: str,
         structured_json: Dict[str, object],
     ) -> Tuple[str, str]:
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utc_now_iso()
         application_id = str(uuid4())
         job_posting_id = str(uuid4())
 
@@ -125,66 +156,137 @@ class CaptureDatabase:
         total = int(total_row["total"]) if total_row else 0
         return [self._row_to_application(row) for row in rows], total
 
-    def get_application(self, application_id: str) -> Optional[dict[str, object]]:
+    def get_application(self, application_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT
-                    id, company, role_title, job_url, job_source, location,
-                    status, notes, fit_score, created_at, updated_at
+                SELECT id, company, role_title, job_url, job_source, location,
+                       status, notes, fit_score, created_at, updated_at
                 FROM applications
                 WHERE id = ?
                 """,
                 (application_id,),
             ).fetchone()
         if row is None:
-            return None
+            raise DbNotFoundError(f"application '{application_id}' not found")
         return self._row_to_application(row)
 
-    def update_application_status(
-        self,
-        application_id: str,
-        target_status: str,
-        *,
-        updated_at: str,
-    ) -> Optional[dict[str, object]]:
-        with self.connect() as conn:
-            result = conn.execute(
-                """
-                UPDATE applications
-                SET status = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (target_status, updated_at, application_id),
-            )
-            if result.rowcount == 0:
-                return None
-            conn.commit()
-
-        return self.get_application(application_id)
-
-    def list_resume_versions(self, application_id: str) -> list[dict[str, object]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    id, application_id, template_id, pdf_path, rendered_html_path,
-                    approval_approved, approval_approved_at, created_at
-                FROM resume_versions
-                WHERE application_id = ?
-                ORDER BY created_at DESC, id DESC
-                """,
-                (application_id,),
-            ).fetchall()
-        return [self._row_to_resume_timeline(row) for row in rows]
-
-    def get_latest_resume_version(self, application_id: str) -> Optional[dict[str, object]]:
+    def get_job_posting_for_application(self, application_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT
-                    id, application_id, template_id, pdf_path, rendered_html_path,
-                    approval_approved, approval_approved_at, created_at
+                SELECT id, application_id, raw_text, structured_json, captured_at
+                FROM job_postings
+                WHERE application_id = ?
+                ORDER BY captured_at DESC, id DESC
+                LIMIT 1
+                """,
+                (application_id,),
+            ).fetchone()
+        if row is None:
+            raise DbNotFoundError(f"job posting for application '{application_id}' not found")
+        out = dict(row)
+        out["structured_json"] = self._parse_json_object(out["structured_json"])
+        return out
+
+    def upsert_user_profile(
+        self,
+        *,
+        profile_id: str,
+        full_name: str,
+        headline: Optional[str],
+        summary: Optional[str],
+        experiences: list[dict[str, Any]],
+        projects: list[dict[str, Any]],
+        skills: list[str],
+        education: list[dict[str, Any]],
+        updated_at: Optional[str] = None,
+    ) -> None:
+        profile_updated_at = updated_at or _utc_now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_profiles (
+                    id, full_name, headline, summary, experiences_json, projects_json,
+                    skills_json, education_json, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    full_name = excluded.full_name,
+                    headline = excluded.headline,
+                    summary = excluded.summary,
+                    experiences_json = excluded.experiences_json,
+                    projects_json = excluded.projects_json,
+                    skills_json = excluded.skills_json,
+                    education_json = excluded.education_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    profile_id,
+                    full_name,
+                    headline,
+                    summary,
+                    json.dumps(experiences),
+                    json.dumps(projects),
+                    json.dumps(skills),
+                    json.dumps(education),
+                    profile_updated_at,
+                ),
+            )
+            conn.commit()
+
+    def get_user_profile(self) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, full_name, headline, summary, experiences_json, projects_json,
+                       skills_json, education_json, updated_at
+                FROM user_profiles
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+        if row is None:
+            raise DbNotFoundError("user profile not found")
+
+        return {
+            "id": row["id"],
+            "full_name": row["full_name"],
+            "headline": row["headline"],
+            "summary": row["summary"],
+            "experiences": self._parse_json_list(row["experiences_json"]),
+            "projects": self._parse_json_list(row["projects_json"]),
+            "skills": [str(skill) for skill in self._parse_json_list(row["skills_json"])],
+            "education": self._parse_json_list(row["education_json"]),
+            "updated_at": row["updated_at"],
+        }
+
+    def list_resume_versions_for_application(self, application_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, application_id, template_id, pdf_path, rendered_html_path,
+                       render_model_json, change_log_json, claims_map_json, approval_approved,
+                       approval_approved_at, created_at
+                FROM resume_versions
+                WHERE application_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (application_id,),
+            ).fetchall()
+        return [self._resume_version_from_row(row) for row in rows]
+
+    def list_resume_versions(self, application_id: str) -> list[dict[str, Any]]:
+        return [self._to_resume_timeline(version) for version in self.list_resume_versions_for_application(application_id)]
+
+    def get_latest_resume_version_for_application(self, application_id: str) -> Optional[dict[str, Any]]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, application_id, template_id, pdf_path, rendered_html_path,
+                       render_model_json, change_log_json, claims_map_json, approval_approved,
+                       approval_approved_at, created_at
                 FROM resume_versions
                 WHERE application_id = ?
                 ORDER BY created_at DESC, id DESC
@@ -194,45 +296,71 @@ class CaptureDatabase:
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_resume_timeline(row)
+        return self._resume_version_from_row(row)
 
-    def get_resume_version(self, resume_version_id: str) -> Optional[dict[str, object]]:
+    def get_latest_resume_version(self, application_id: str) -> Optional[dict[str, Any]]:
+        latest = self.get_latest_resume_version_for_application(application_id)
+        if latest is None:
+            return None
+        return self._to_resume_timeline(latest)
+
+    def get_resume_version(self, resume_version_id: str) -> dict[str, Any]:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT
-                    id, application_id, template_id, pdf_path, rendered_html_path,
-                    render_model_json, change_log, claims_map,
-                    approval_approved, approval_approved_at, created_at
+                SELECT id, application_id, template_id, pdf_path, rendered_html_path,
+                       render_model_json, change_log_json, claims_map_json, approval_approved,
+                       approval_approved_at, created_at
                 FROM resume_versions
                 WHERE id = ?
                 """,
                 (resume_version_id,),
             ).fetchone()
         if row is None:
-            return None
-        return self._row_to_resume_detail(row)
+            raise DbNotFoundError(f"resume_version '{resume_version_id}' not found")
+        return self._resume_version_from_row(row)
 
-    def approve_resume_version(self, resume_version_id: str, *, approved_at: str) -> Optional[dict[str, object]]:
-        current = self.get_resume_version(resume_version_id)
-        if current is None:
-            return None
-        approval = current.get("approval", {})
-        if isinstance(approval, dict) and approval.get("approved") is True:
-            return current
-
+    def save_resume_version(
+        self,
+        *,
+        id: str,
+        application_id: str,
+        template_id: str,
+        pdf_path: str,
+        rendered_html_path: str,
+        render_model_json: dict[str, Any],
+        change_log_json: dict[str, Any],
+        claims_map_json: list[dict[str, Any]],
+        approval_approved: bool,
+        approval_approved_at: Optional[str],
+        created_at: str,
+    ) -> None:
+        self.get_application(application_id)
         with self.connect() as conn:
             conn.execute(
                 """
-                UPDATE resume_versions
-                SET approval_approved = 1, approval_approved_at = ?
-                WHERE id = ?
+                INSERT INTO resume_versions (
+                    id, application_id, template_id, pdf_path, rendered_html_path,
+                    render_model_json, change_log_json, claims_map_json, approval_approved,
+                    approval_approved_at, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (approved_at, resume_version_id),
+                (
+                    id,
+                    application_id,
+                    template_id,
+                    pdf_path,
+                    rendered_html_path,
+                    json.dumps(render_model_json),
+                    json.dumps(change_log_json),
+                    json.dumps(claims_map_json),
+                    1 if approval_approved else 0,
+                    approval_approved_at,
+                    created_at,
+                ),
             )
             conn.commit()
-
-        return self.get_resume_version(resume_version_id)
 
     def insert_resume_version(
         self,
@@ -247,40 +375,82 @@ class CaptureDatabase:
         created_at: Optional[str] = None,
     ) -> str:
         resume_version_id = str(uuid4())
-        timestamp = created_at or datetime.now(timezone.utc).isoformat()
+        timestamp = created_at or _utc_now_iso()
         root = f"artifacts/resumes/{application_id}"
-        pdf_path = f"{root}/{resume_version_id}.pdf"
-        html_path = f"{root}/{resume_version_id}.html"
+
+        self.save_resume_version(
+            id=resume_version_id,
+            application_id=application_id,
+            template_id=template_id,
+            pdf_path=f"{root}/{resume_version_id}.pdf",
+            rendered_html_path=f"{root}/{resume_version_id}.html",
+            render_model_json=render_model_json,
+            change_log_json=change_log,
+            claims_map_json=claims_map,
+            approval_approved=approval_approved,
+            approval_approved_at=approval_approved_at,
+            created_at=timestamp,
+        )
+
+        return resume_version_id
+
+    def approve_resume_version(self, resume_version_id: str, *, approved_at: Optional[str] = None) -> dict[str, Any]:
+        current = self.get_resume_version(resume_version_id)
+        if any(item.get("verification_status") == "rejected" for item in current["claims_map"]):
+            raise DbComplianceError("unsupported claims detected")
+
+        effective_approved_at = approved_at or current["approval"].get("approved_at") or _utc_now_iso()
 
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO resume_versions (
-                    id, application_id, template_id, pdf_path, rendered_html_path,
-                    render_model_json, change_log, claims_map,
-                    approval_approved, approval_approved_at, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                UPDATE resume_versions
+                SET approval_approved = 1, approval_approved_at = ?
+                WHERE id = ?
                 """,
-                (
-                    resume_version_id,
-                    application_id,
-                    template_id,
-                    pdf_path,
-                    html_path,
-                    json.dumps(render_model_json),
-                    json.dumps(change_log),
-                    json.dumps(claims_map),
-                    1 if approval_approved else 0,
-                    approval_approved_at,
-                    timestamp,
-                ),
+                (effective_approved_at, resume_version_id),
             )
             conn.commit()
+        return self.get_resume_version(resume_version_id)
 
-        return resume_version_id
+    def set_application_status(self, application_id: str, target_status: str) -> dict[str, Any]:
+        current = self.get_application(application_id)
+        self._validate_status_transition(str(current["status"]), target_status)
 
-    def _row_to_application(self, row: sqlite3.Row) -> dict[str, object]:
+        if target_status == "ready_to_apply":
+            latest = self.get_latest_resume_version_for_application(application_id)
+            if latest is None or not bool(latest["approval"].get("approved")):
+                raise DbComplianceError(
+                    "approval gate failed: latest resume version must be approved before ready_to_apply"
+                )
+
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE applications
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (target_status, _utc_now_iso(), application_id),
+            )
+            conn.commit()
+        return self.get_application(application_id)
+
+    def update_application_status(self, application_id: str, target_status: str, *, updated_at: str) -> dict[str, Any]:
+        self.get_application(application_id)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE applications
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (target_status, updated_at, application_id),
+            )
+            conn.commit()
+        return self.get_application(application_id)
+
+    def _row_to_application(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         return {
             "id": row["id"],
             "company": row["company"],
@@ -295,13 +465,19 @@ class CaptureDatabase:
             "updated_at": row["updated_at"],
         }
 
-    def _row_to_resume_timeline(self, row: sqlite3.Row) -> dict[str, object]:
+    def _resume_version_from_row(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        render_model = self._parse_json_object(row["render_model_json"])
+        change_log = self._parse_json_object(row["change_log_json"])
+        claims_map = self._parse_json_list(row["claims_map_json"])
         return {
             "id": row["id"],
             "application_id": row["application_id"],
             "template_id": row["template_id"],
             "pdf_path": row["pdf_path"],
             "rendered_html_path": row["rendered_html_path"],
+            "render_model_json": render_model,
+            "change_log": change_log,
+            "claims_map": claims_map,
             "approval": {
                 "approved": bool(row["approval_approved"]),
                 "approved_at": row["approval_approved_at"],
@@ -309,16 +485,23 @@ class CaptureDatabase:
             "created_at": row["created_at"],
         }
 
-    def _row_to_resume_detail(self, row: sqlite3.Row) -> dict[str, object]:
-        timeline = self._row_to_resume_timeline(row)
+    def _to_resume_timeline(self, resume: dict[str, Any]) -> dict[str, Any]:
         return {
-            **timeline,
-            "render_model_json": self._parse_json_object(row["render_model_json"]),
-            "change_log": self._parse_json_object(row["change_log"]),
-            "claims_map": self._parse_json_list(row["claims_map"]),
+            "id": resume["id"],
+            "application_id": resume["application_id"],
+            "template_id": resume["template_id"],
+            "pdf_path": resume["pdf_path"],
+            "rendered_html_path": resume["rendered_html_path"],
+            "approval": {
+                "approved": bool(resume.get("approval", {}).get("approved", False)),
+                "approved_at": resume.get("approval", {}).get("approved_at"),
+            },
+            "created_at": resume["created_at"],
         }
 
     def _parse_json_object(self, value: object) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
         if not isinstance(value, str):
             return {}
         try:
@@ -327,13 +510,19 @@ class CaptureDatabase:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _parse_json_list(self, value: object) -> list[dict[str, Any]]:
+    def _parse_json_list(self, value: object) -> list[Any]:
+        if isinstance(value, list):
+            return value
         if not isinstance(value, str):
             return []
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
             return []
-        if not isinstance(parsed, list):
-            return []
-        return [item for item in parsed if isinstance(item, dict)]
+        return parsed if isinstance(parsed, list) else []
+
+    def _validate_status_transition(self, current: str, target: str) -> None:
+        if current not in _ALLOWED_STATUS_TRANSITIONS:
+            raise DbConflictError(f"unknown current status '{current}'")
+        if target not in _ALLOWED_STATUS_TRANSITIONS[current]:
+            raise DbConflictError(f"invalid transition '{current}' -> '{target}'")
