@@ -1,0 +1,1 @@
+"""AutoApply WS-C modules."""
