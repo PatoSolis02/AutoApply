@@ -13,9 +13,10 @@ Complete this before opening any Sprint 02 thread.
 
 ## Runtime/Tooling
 
-- Python version confirmed.
-- Node/npm version confirmed.
-- Test commands confirmed and documented.
+- Runtime baseline reviewed in `docs/TOOLING_BASELINE.md`.
+- Python version confirmed against baseline.
+- Node/npm version confirmed against baseline.
+- Canonical test commands confirmed and documented.
 
 ## Contracts
 
