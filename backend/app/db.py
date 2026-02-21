@@ -415,6 +415,8 @@ class CaptureDatabase:
 
     def set_application_status(self, application_id: str, target_status: str) -> dict[str, Any]:
         current = self.get_application(application_id)
+        if str(current["status"]) == target_status:
+            return current
         self._validate_status_transition(str(current["status"]), target_status)
 
         if target_status == "ready_to_apply":
