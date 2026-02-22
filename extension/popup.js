@@ -17,6 +17,23 @@ function queryActiveTab() {
 function extractFromTab(tabId) {
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, { type: "EXTRACT_JOB" }, (response) => {
+      const runtimeError = chrome.runtime?.lastError;
+      if (runtimeError?.message) {
+        resolve({
+          ok: false,
+          error: `${runtimeError.message}. Refresh the LinkedIn tab and try again.`
+        });
+        return;
+      }
+
+      if (!response) {
+        resolve({
+          ok: false,
+          error: "No response from page. Refresh the LinkedIn tab and try again."
+        });
+        return;
+      }
+
       resolve(response);
     });
   });

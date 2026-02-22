@@ -16,6 +16,7 @@ coverage/
 
 # Generated runtime artifacts
 artifacts/
+backend/data/
 
 # Tooling/editor noise
 .DS_Store
