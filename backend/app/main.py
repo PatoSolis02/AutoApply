@@ -120,14 +120,11 @@ def _build_handler(capture_db: CaptureDatabase):
             _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
 
         def _handle_capture(self) -> None:
-            body = self._read_json_body()
-            if body is None:
-                return
-            if not isinstance(body, dict):
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+            payload = self._read_json_object()
+            if payload is None:
                 return
 
-            capture, errors = validate_capture_payload(body)
+            capture, errors = validate_capture_payload(payload)
             if capture is None:
                 _json_response(
                     self,
@@ -248,27 +245,16 @@ def _build_handler(capture_db: CaptureDatabase):
             )
 
         def _handle_update_application_status(self, application_id: str) -> None:
-            payload = self._read_json_body()
+            payload = self._read_json_object()
             if payload is None:
                 return
-            if not isinstance(payload, dict):
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
-                return
 
-            target_status = payload.get("target_status")
-            if not isinstance(target_status, str) or not target_status.strip():
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": "target_status", "message": "is required"}],
-                    },
-                )
+            target_status = self._read_required_non_empty_string(payload, "target_status")
+            if target_status is None:
                 return
 
             try:
-                updated = capture_db.set_application_status(application_id, target_status.strip())
+                updated = capture_db.set_application_status(application_id, target_status)
             except DbNotFoundError as err:
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
@@ -309,30 +295,19 @@ def _build_handler(capture_db: CaptureDatabase):
             _json_response(self, HTTPStatus.OK, resume_version)
 
         def _handle_generate_resume_version(self, application_id: str) -> None:
-            payload = self._read_json_body()
+            payload = self._read_json_object()
             if payload is None:
                 return
-            if not isinstance(payload, dict):
-                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
-                return
 
-            template_id = payload.get("template_id")
-            if not isinstance(template_id, str) or not template_id.strip():
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": "template_id", "message": "is required"}],
-                    },
-                )
+            template_id = self._read_required_non_empty_string(payload, "template_id")
+            if template_id is None:
                 return
 
             try:
                 response_payload = handle_generate_resume_version(
                     generation_service,
                     application_id,
-                    GenerateResumeRequest(template_id=template_id.strip()),
+                    GenerateResumeRequest(template_id=template_id),
                 )
             except ApiError as err:
                 _json_response(self, err.status_code, {"detail": err.detail})
@@ -392,6 +367,29 @@ def _build_handler(capture_db: CaptureDatabase):
                     {"detail": "invalid request payload", "errors": [{"field": "body", "message": "invalid JSON"}]},
                 )
                 return None
+
+        def _read_json_object(self) -> dict[str, Any] | None:
+            payload = self._read_json_body()
+            if payload is None:
+                return None
+            if not isinstance(payload, dict):
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return None
+            return payload
+
+        def _read_required_non_empty_string(self, payload: dict[str, Any], field: str) -> Optional[str]:
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip():
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": field, "message": "is required"}],
+                    },
+                )
+                return None
+            return value.strip()
 
         def _read_positive_int(self, value: str, *, default: int) -> Optional[int]:
             if value is None or value == "":
