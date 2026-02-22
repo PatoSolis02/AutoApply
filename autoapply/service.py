@@ -124,33 +124,41 @@ class ResumeGenerationService:
 
     def _build_claims_map(self, render_model: RenderModel) -> list[ClaimMapEntry]:
         claims: list[ClaimMapEntry] = []
+        section_source_map = (
+            ("experience", "experience"),
+            ("projects", "project"),
+        )
+        for section_name, source_type in section_source_map:
+            claims.extend(
+                self._build_section_claims(
+                    render_model=render_model,
+                    section_name=section_name,
+                    source_type=source_type,
+                )
+            )
 
-        for section in render_model.sections.get("experience", []):
+        return claims
+
+    def _build_section_claims(
+        self,
+        *,
+        render_model: RenderModel,
+        section_name: str,
+        source_type: str,
+    ) -> list[ClaimMapEntry]:
+        claims: list[ClaimMapEntry] = []
+        for section in render_model.sections.get(section_name, []):
             for bullet in section.bullets:
                 claims.append(
                     ClaimMapEntry(
                         bullet_id=bullet.id,
                         bullet_text=bullet.text,
-                        source_type="experience",
+                        source_type=source_type,
                         source_id=section.entry_id,
                         evidence_text=bullet.text,
                         verification_status="supported",
                     )
                 )
-
-        for section in render_model.sections.get("projects", []):
-            for bullet in section.bullets:
-                claims.append(
-                    ClaimMapEntry(
-                        bullet_id=bullet.id,
-                        bullet_text=bullet.text,
-                        source_type="project",
-                        source_id=section.entry_id,
-                        evidence_text=bullet.text,
-                        verification_status="supported",
-                    )
-                )
-
         return claims
 
     def _build_warnings(self, profile: UserProfile, job_posting: JobPosting) -> list[str]:
