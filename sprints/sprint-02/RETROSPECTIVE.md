@@ -70,6 +70,50 @@ Integration validation checkpoints recorded during Sprint 02:
   - frontend tests: 6/6 (`npm test`)
   - frontend build: pass (`npm run build`)
 
+## Thread Reflection Consolidation
+
+S2-A (Platform API) highlights:
+
+- Endpoint delivery required full-stack backend work (handler + DB methods + migration + HTTP integration tests), not just route stubs.
+- Lifecycle and approval semantics were correctly validated at HTTP boundary (`404/409/422`), which reduced contract drift risk.
+- Thread flagged a policy ambiguity around approval/status coupling that later required integration-level clarification.
+
+S2-B (Compliance Runtime) highlights:
+
+- Runtime compliance enforcement was implemented through shared DB guard methods to reduce bypass risk.
+- Thread confirmed that future state-mutating routes must call the same guard path, or policy bypass risk reappears.
+- Import-path bridging was necessary in-flight because package layout was still mid-transition until S2-C merged.
+
+S2-C (Package Layout) highlights:
+
+- Canonical package root unification (`autoapply/`) removed `sys.path` style ambiguity and stabilized imports.
+- Thread verified no contract/API behavior change from this refactor, only runtime consistency improvements.
+- Residual risk remains in stale local scripts/docs that still assume `PYTHONPATH=src`.
+
+S2-D (Repo Hygiene) highlights:
+
+- Cleanup scope was large because `node_modules` and generated artifacts were already tracked; this was high-impact but necessary.
+- Runtime/tooling baseline docs were added, but enforcement is still mostly convention without CI gates.
+- Thread validated that cleanup did not regress baseline test suites.
+
+## Errors and How They Were Fixed
+
+1. Workstream semantic drift on approval/status behavior:
+Error: Thread-level interpretations differed on whether approval should auto-move status.
+Fix: Integration normalized behavior and shipped `eb0b1b9` to preserve status idempotency after approval.
+
+2. Frontend API parsing failure in dev:
+Error: UI parsed HTML as JSON because Vite proxy was not configured for `/api`.
+Fix: Added Vite server proxy and hardened non-JSON error handling in API client (`b6f8beb`).
+
+3. Extension capture instability on LinkedIn variants:
+Error: Selector and timing assumptions failed on collections/right-panel variants.
+Fix: Added staged extraction hardening (auto-inject content script, async wait, top-card/json-ld/body fallbacks) across `59edc74`, `aa7aabc`, `da9f2e5`, `ea1ff45`, `bb4cef8`.
+
+4. Repository noise and merge friction:
+Error: Generated/vendor artifacts were tracked, creating huge diffs and poor signal.
+Fix: S2-D untracked artifacts, expanded `.gitignore`, and pinned tooling baseline (`99aa8f7`, `23b4ec1`, `8265077`).
+
 ## What Went Well
 
 1. Planned merge ordering reduced conflict blast radius.
@@ -85,6 +129,7 @@ Integration validation checkpoints recorded during Sprint 02:
 3. Frontend dev runtime had proxy/config gaps that surfaced only during manual demo.
 4. Sandbox constraints (socket binding/index lock/build outputs) required escalated execution for normal workflows.
 5. Additional scope (profile API/UI placeholders) entered near sprint close, which improved product readiness but increased end-of-sprint churn.
+6. Thread handoffs revealed policy interpretation drift that was only reconciled at integration time.
 
 ## Root Causes
 
@@ -92,6 +137,7 @@ Integration validation checkpoints recorded during Sprint 02:
 - Contract-level success criteria did not originally include extension DOM variant coverage and frontend proxy verification.
 - Tooling/sandbox assumptions were not fully codified as "always escalate for X" guardrails.
 - Reflection/handoff gates were defined but not enforced as a strict pre-merge checklist.
+- Policy intent (approval vs status coupling) was not written crisply enough for fully independent thread interpretation.
 
 ## Key Learnings
 
@@ -100,6 +146,8 @@ Integration validation checkpoints recorded during Sprint 02:
 3. Keep one integration owner but require hard handoff gates before merge.
 4. Capture and UI layers need explicit operational diagnostics to accelerate support.
 5. Profile data entry should exist early because generation/compliance quality depends on it.
+6. Explicitly encode policy semantics in contract text when behavior coupling is possible across endpoints.
+7. Hygiene and runtime baseline need enforcement, not only documentation.
 
 ## Action Items for Sprint 03
 
@@ -108,6 +156,7 @@ Process:
 1. Enforce mandatory handoff files for all threads before integration starts.
 2. Add a sprint-end demo checklist covering extension capture, frontend route loading, and backend API health.
 3. Keep a branch provenance table in `SPRINT_LOG.md` as commits land.
+4. Add a required "policy semantics confirmation" line in each thread handoff for contract-sensitive behaviors.
 
 Technical:
 
@@ -116,6 +165,8 @@ Technical:
 3. Implement real resume-file parsing pipeline behind the `/profile` upload placeholder.
 4. Add frontend tests for profile page load/save error states and JSON validation UX.
 5. Add a lightweight health endpoint and UI diagnostics panel for quicker local triage.
+6. Add CI checks to block tracked generated/vendor paths and enforce runtime versions.
+7. Add explicit API tests for approval/status coupling semantics (including idempotency).
 
 ## Current Standing
 
