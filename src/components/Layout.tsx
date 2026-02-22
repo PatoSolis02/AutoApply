@@ -16,9 +16,14 @@ export function Layout({ title, subtitle, children }: LayoutProps) {
           <h1>{title}</h1>
           <p>{subtitle}</p>
         </div>
-        <Link className="ghost-link" to="/applications">
-          Applications
-        </Link>
+        <nav className="hero-nav" aria-label="Primary">
+          <Link className="ghost-link" to="/applications">
+            Applications
+          </Link>
+          <Link className="ghost-link" to="/profile">
+            Profile
+          </Link>
+        </nav>
       </header>
       <main>{children}</main>
     </div>

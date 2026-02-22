@@ -5,6 +5,8 @@ import {
   PaginatedResponse,
   ResumeTimelineEntry,
   ResumeVersionDetail,
+  UpsertUserProfileRequest,
+  UserProfile,
 } from '../types';
 
 const API_BASE = '/api/v1';
@@ -142,5 +144,16 @@ export async function getResumeVersion(resumeVersionId: string): Promise<ResumeV
 export async function approveResumeVersion(resumeVersionId: string): Promise<ResumeVersionDetail> {
   return request<ResumeVersionDetail>(`/resume-versions/${resumeVersionId}/approve`, {
     method: 'POST',
+  });
+}
+
+export async function getUserProfile(): Promise<UserProfile> {
+  return request<UserProfile>('/profile');
+}
+
+export async function upsertUserProfile(payload: UpsertUserProfileRequest): Promise<UserProfile> {
+  return request<UserProfile>('/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });
 }

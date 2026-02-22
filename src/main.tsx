@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { ApplicationDetailPage } from './pages/ApplicationDetailPage';
 import { ApplicationListPage } from './pages/ApplicationListPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { ResumeVersionDetailPage } from './pages/ResumeVersionDetailPage';
 import './styles.css';
 
@@ -22,6 +23,10 @@ const router = createBrowserRouter([
   {
     path: '/applications/:applicationId/resume-versions/:resumeVersionId',
     element: <ResumeVersionDetailPage />,
+  },
+  {
+    path: '/profile',
+    element: <ProfilePage />,
   },
 ]);
 

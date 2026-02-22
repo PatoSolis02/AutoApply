@@ -89,3 +89,26 @@ export interface PaginatedResponse<T> {
   page_size?: number;
   total?: number;
 }
+
+export interface UserProfile {
+  id: string;
+  full_name: string;
+  headline: string | null;
+  summary: string | null;
+  experiences: Array<Record<string, unknown>>;
+  projects: Array<Record<string, unknown>>;
+  skills: string[];
+  education: Array<Record<string, unknown>>;
+  updated_at: string;
+}
+
+export interface UpsertUserProfileRequest {
+  id?: string;
+  full_name: string;
+  headline?: string | null;
+  summary?: string | null;
+  experiences?: Array<Record<string, unknown>>;
+  projects?: Array<Record<string, unknown>>;
+  skills?: string[];
+  education?: Array<Record<string, unknown>>;
+}

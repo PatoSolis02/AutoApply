@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from .db import CaptureDatabase, DbComplianceError, DbConflictError, DbNotFoundError
 from .ingest import build_structured_job_posting
 from .runtime_generation import SqliteGenerateRepository
-from .schemas import validate_capture_payload
+from .schemas import validate_capture_payload, validate_user_profile_payload
 
 from autoapply.api import ApiError, handle_generate_resume_version
 from autoapply.artifacts import ArtifactWriter
@@ -28,6 +28,7 @@ _APPLICATION_RESUME_VERSIONS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+
 _APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions/generate$")
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
+_PROFILE_PATH = "/api/v1/profile"
 _ALLOWED_STATUSES = {
     "captured",
     "drafting",
@@ -63,6 +64,9 @@ def _build_handler(capture_db: CaptureDatabase):
             if parsed.path == "/api/v1/applications":
                 self._handle_list_applications(parsed.query)
                 return
+            if parsed.path == _PROFILE_PATH:
+                self._handle_get_profile()
+                return
 
             match = _APPLICATION_ID_PATTERN.match(parsed.path)
             if match:
@@ -88,6 +92,13 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
                 return
             self._handle_update_application_status(match.group(1))
+
+        def do_PUT(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path == _PROFILE_PATH:
+                self._handle_upsert_profile()
+                return
+            _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -144,6 +155,41 @@ def _build_handler(capture_db: CaptureDatabase):
                     "job_posting_id": job_posting_id,
                 },
             )
+
+        def _handle_get_profile(self) -> None:
+            try:
+                profile = capture_db.get_user_profile()
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
+                return
+            _json_response(self, HTTPStatus.OK, profile)
+
+        def _handle_upsert_profile(self) -> None:
+            body = self._read_json_body()
+            if body is None:
+                return
+
+            profile_payload, errors = validate_user_profile_payload(body)
+            if profile_payload is None:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"detail": "invalid request payload", "errors": errors},
+                )
+                return
+
+            capture_db.upsert_user_profile(
+                profile_id=profile_payload.profile_id,
+                full_name=profile_payload.full_name,
+                headline=profile_payload.headline,
+                summary=profile_payload.summary,
+                experiences=profile_payload.experiences,
+                projects=profile_payload.projects,
+                skills=profile_payload.skills,
+                education=profile_payload.education,
+            )
+            profile = capture_db.get_user_profile()
+            _json_response(self, HTTPStatus.OK, profile)
 
         def _handle_list_applications(self, query: str) -> None:
             params = parse_qs(query)
