@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Callable
 
 from .db import CaptureDatabase, DbNotFoundError
 
@@ -42,17 +42,11 @@ class SqliteGenerateRepository(GenerateRepository):
         self._db = capture_db
 
     def get_application(self, application_id: str) -> Application:
-        try:
-            row = self._db.get_application(application_id)
-        except DbNotFoundError as err:
-            raise NotFoundError(str(err)) from err
+        row = self._translate_not_found(lambda: self._db.get_application(application_id))
         return Application(**row)
 
     def get_job_posting_for_application(self, application_id: str) -> JobPosting:
-        try:
-            row = self._db.get_job_posting_for_application(application_id)
-        except DbNotFoundError as err:
-            raise NotFoundError(str(err)) from err
+        row = self._translate_not_found(lambda: self._db.get_job_posting_for_application(application_id))
         return JobPosting(
             id=row["id"],
             application_id=row["application_id"],
@@ -62,45 +56,20 @@ class SqliteGenerateRepository(GenerateRepository):
         )
 
     def get_user_profile(self) -> UserProfile:
-        try:
-            row = self._db.get_user_profile()
-        except DbNotFoundError as err:
-            raise NotFoundError(str(err)) from err
+        row = self._translate_not_found(self._db.get_user_profile)
 
         experiences = [
-            ExperienceEntry(
-                id=str(item.get("id", "")),
-                company=str(item.get("company", "")),
-                title=str(item.get("title", "")),
-                start_date=str(item.get("start_date", "")),
-                end_date=item.get("end_date"),
-                bullets=[str(bullet) for bullet in _as_list(item.get("bullets"))],
-                skills=[str(skill) for skill in _as_list(item.get("skills"))],
-            )
+            self._to_experience_entry(item)
             for item in _as_list(row.get("experiences"))
             if isinstance(item, dict)
         ]
         projects = [
-            ProjectEntry(
-                id=str(item.get("id", "")),
-                name=str(item.get("name", "")),
-                description=str(item.get("description", "")),
-                bullets=[str(bullet) for bullet in _as_list(item.get("bullets"))],
-                skills=[str(skill) for skill in _as_list(item.get("skills"))],
-                url=item.get("url"),
-            )
+            self._to_project_entry(item)
             for item in _as_list(row.get("projects"))
             if isinstance(item, dict)
         ]
         education = [
-            EducationEntry(
-                id=str(item.get("id", "")),
-                school=str(item.get("school", "")),
-                degree=str(item.get("degree", "")),
-                field=item.get("field"),
-                start_date=item.get("start_date"),
-                end_date=item.get("end_date"),
-            )
+            self._to_education_entry(item)
             for item in _as_list(row.get("education"))
             if isinstance(item, dict)
         ]
@@ -160,6 +129,7 @@ class SqliteGenerateRepository(GenerateRepository):
 
     def _to_resume_version(self, row: dict[str, Any]) -> ResumeVersion:
         render_model_raw = row["render_model_json"]
+        sections_raw = render_model_raw.get("sections", {})
         render_model = RenderModel(
             headline=str(render_model_raw.get("headline", "")),
             summary=str(render_model_raw.get("summary", "")),
@@ -167,36 +137,8 @@ class SqliteGenerateRepository(GenerateRepository):
             selected_project_ids=[str(item) for item in _as_list(render_model_raw.get("selected_project_ids"))],
             selected_skill_keywords=[str(item) for item in _as_list(render_model_raw.get("selected_skill_keywords"))],
             sections={
-                "experience": [
-                    RenderSectionEntry(
-                        entry_id=str(section.get("entry_id", "")),
-                        bullets=[
-                            RenderBullet(
-                                id=str(bullet.get("id", "")),
-                                text=str(bullet.get("text", "")),
-                            )
-                            for bullet in _as_list(section.get("bullets"))
-                            if isinstance(bullet, dict)
-                        ],
-                    )
-                    for section in _as_list(render_model_raw.get("sections", {}).get("experience"))
-                    if isinstance(section, dict)
-                ],
-                "projects": [
-                    RenderSectionEntry(
-                        entry_id=str(section.get("entry_id", "")),
-                        bullets=[
-                            RenderBullet(
-                                id=str(bullet.get("id", "")),
-                                text=str(bullet.get("text", "")),
-                            )
-                            for bullet in _as_list(section.get("bullets"))
-                            if isinstance(bullet, dict)
-                        ],
-                    )
-                    for section in _as_list(render_model_raw.get("sections", {}).get("projects"))
-                    if isinstance(section, dict)
-                ],
+                "experience": self._to_render_sections(sections_raw.get("experience")),
+                "projects": self._to_render_sections(sections_raw.get("projects")),
             },
         )
 
@@ -240,3 +182,60 @@ class SqliteGenerateRepository(GenerateRepository):
             ),
             created_at=row["created_at"],
         )
+
+    def _translate_not_found(self, loader: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return loader()
+        except DbNotFoundError as err:
+            raise NotFoundError(str(err)) from err
+
+    def _to_experience_entry(self, item: dict[str, Any]) -> ExperienceEntry:
+        return ExperienceEntry(
+            id=str(item.get("id", "")),
+            company=str(item.get("company", "")),
+            title=str(item.get("title", "")),
+            start_date=str(item.get("start_date", "")),
+            end_date=item.get("end_date"),
+            bullets=[str(bullet) for bullet in _as_list(item.get("bullets"))],
+            skills=[str(skill) for skill in _as_list(item.get("skills"))],
+        )
+
+    def _to_project_entry(self, item: dict[str, Any]) -> ProjectEntry:
+        return ProjectEntry(
+            id=str(item.get("id", "")),
+            name=str(item.get("name", "")),
+            description=str(item.get("description", "")),
+            bullets=[str(bullet) for bullet in _as_list(item.get("bullets"))],
+            skills=[str(skill) for skill in _as_list(item.get("skills"))],
+            url=item.get("url"),
+        )
+
+    def _to_education_entry(self, item: dict[str, Any]) -> EducationEntry:
+        return EducationEntry(
+            id=str(item.get("id", "")),
+            school=str(item.get("school", "")),
+            degree=str(item.get("degree", "")),
+            field=item.get("field"),
+            start_date=item.get("start_date"),
+            end_date=item.get("end_date"),
+        )
+
+    def _to_render_sections(self, sections: Any) -> list[RenderSectionEntry]:
+        return [
+            RenderSectionEntry(
+                entry_id=str(section.get("entry_id", "")),
+                bullets=self._to_render_bullets(section.get("bullets")),
+            )
+            for section in _as_list(sections)
+            if isinstance(section, dict)
+        ]
+
+    def _to_render_bullets(self, bullets: Any) -> list[RenderBullet]:
+        return [
+            RenderBullet(
+                id=str(bullet.get("id", "")),
+                text=str(bullet.get("text", "")),
+            )
+            for bullet in _as_list(bullets)
+            if isinstance(bullet, dict)
+        ]

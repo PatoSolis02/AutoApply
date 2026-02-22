@@ -4,6 +4,7 @@ import json
 import threading
 import unittest
 from http.client import HTTPConnection
+from typing import Any
 
 from app.db import CaptureDatabase
 from app.main import create_server
@@ -29,7 +30,7 @@ class TrackingApiTests(unittest.TestCase):
 
         return tempfile.mkdtemp(prefix="tracking-api-tests-")
 
-    def _request_json(self, method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    def _request_json(self, method: str, path: str, payload: Any = None) -> tuple[int, dict]:
         conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
         body = json.dumps(payload) if payload is not None else None
         headers = {"Content-Type": "application/json"} if payload is not None else {}
@@ -218,6 +219,25 @@ class TrackingApiTests(unittest.TestCase):
         status, body = self._request_json("GET", "/api/v1/resume-versions/missing")
         self.assertEqual(status, 404)
         self.assertIn("not found", body["detail"])
+
+    def test_status_and_generate_reject_non_object_payloads(self) -> None:
+        application_id = self._capture_application()
+
+        status, body = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            ["drafting"],
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["detail"], "invalid request payload")
+
+        status, body = self._request_json(
+            "POST",
+            f"/api/v1/applications/{application_id}/resume-versions/generate",
+            ["modern"],
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["detail"], "invalid request payload")
 
 
 if __name__ == "__main__":
