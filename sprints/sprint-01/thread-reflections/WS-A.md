@@ -6,7 +6,7 @@ Date: `2026-02-21`
 
 ## 1) Scope Executed
 
-- Requested: execute WS-A kickoff only (LinkedIn capture action, `POST /api/v1/jobs/capture`, `Application` + `JobPosting` persistence, and validation/success tests) under `docs/BUILD_CONTRACT.md` and `docs/SAFETY_COMPLIANCE.md`.
+- Requested: execute WS-A kickoff only (LinkedIn capture action, `POST /api/v1/jobs/capture`, `Application` + `JobPosting` persistence, and validation/success tests) under `docs/architecture/BUILD_CONTRACT.md` and `docs/architecture/SAFETY_COMPLIANCE.md`.
 - Implemented:
 - Chrome extension user-initiated capture flow for LinkedIn job pages.
 - Backend capture ingest endpoint at `/api/v1/jobs/capture` with `400` payload validation and `201` creation response.

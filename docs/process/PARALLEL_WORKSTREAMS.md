@@ -4,7 +4,7 @@
 
 - Single architecture owner: this thread.
 - Parallel implementation: separate execution threads per workstream.
-- Integration authority: this thread enforces `docs/BUILD_CONTRACT.md`.
+- Integration authority: this thread enforces `docs/architecture/BUILD_CONTRACT.md`.
 
 ## Workstreams
 
@@ -108,7 +108,7 @@ If a workstream needs contract changes:
 
 1. Stop coding that part.
 2. Propose contract delta in this thread.
-3. Update `docs/BUILD_CONTRACT.md`.
+3. Update `docs/architecture/BUILD_CONTRACT.md`.
 4. Resume implementation only after contract update.
 
 ## Definition of Done (Program-Level)
@@ -118,4 +118,4 @@ If a workstream needs contract changes:
    - capture -> application created
    - resume generated -> compliance checked
    - user approval recorded -> status ready_to_apply
-3. Compliance rules from `docs/SAFETY_COMPLIANCE.md` are enforced in code and tests.
+3. Compliance rules from `docs/architecture/SAFETY_COMPLIANCE.md` are enforced in code and tests.

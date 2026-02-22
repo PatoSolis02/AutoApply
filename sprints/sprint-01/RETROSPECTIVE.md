@@ -27,9 +27,9 @@ Build a functional MVP foundation across:
 
 Docs/process artifacts:
 
-- `docs/BUILD_CONTRACT.md`
-- `docs/PARALLEL_WORKSTREAMS.md`
-- `docs/THREAD_KICKOFFS.md`
+- `docs/architecture/BUILD_CONTRACT.md`
+- `docs/process/PARALLEL_WORKSTREAMS.md`
+- `docs/process/THREAD_KICKOFFS.md`
 
 WS-A delivery:
 

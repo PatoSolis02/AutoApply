@@ -37,7 +37,7 @@ Date: `2026-02-21`
 
 ## 5) Contract/API Drift Notes
 
-- No mismatch requiring contract change was identified against `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md`.
+- No mismatch requiring contract change was identified against `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md`.
 - No contract deltas proposed.
 
 ## 6) Quality and Risk Notes

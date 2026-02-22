@@ -13,15 +13,15 @@ Complete this before opening any Sprint 02 thread.
 
 ## Runtime/Tooling
 
-- Runtime baseline reviewed in `docs/TOOLING_BASELINE.md`.
+- Runtime baseline reviewed in `docs/process/TOOLING_BASELINE.md`.
 - Python version confirmed against baseline.
 - Node/npm version confirmed against baseline.
 - Canonical test commands confirmed and documented.
 
 ## Contracts
 
-- `docs/BUILD_CONTRACT.md` reviewed.
-- `docs/SAFETY_COMPLIANCE.md` reviewed.
+- `docs/architecture/BUILD_CONTRACT.md` reviewed.
+- `docs/architecture/SAFETY_COMPLIANCE.md` reviewed.
 - Sprint objective scope reviewed from `sprints/sprint-02/PLAN.md`.
 
 ## Handoff

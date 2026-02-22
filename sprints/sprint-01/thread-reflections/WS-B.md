@@ -39,7 +39,7 @@ Date: `2026-02-21`
 
 ## 5) Contract/API Drift Notes
 
-- Mismatch observed vs `docs/BUILD_CONTRACT.md`:
+- Mismatch observed vs `docs/architecture/BUILD_CONTRACT.md`:
   - WS-B UI expects contract endpoints:
     - `GET /api/v1/applications`
     - `GET /api/v1/applications/{application_id}`
