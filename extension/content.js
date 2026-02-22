@@ -2,7 +2,7 @@ function textFromSelectors(selectors) {
   for (const selector of selectors) {
     const el = document.querySelector(selector);
     if (el && el.textContent) {
-      const value = el.textContent.trim();
+      const value = compact(el.textContent);
       if (value) {
         return value;
       }
@@ -24,6 +24,104 @@ function compact(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
+function sanitizeCompanyName(value) {
+  const candidate = compact(value).replace(/\s+\|.*$/, "");
+  if (!candidate) return "";
+  if (candidate.length > 120) return "";
+  if (/^\d+\+?\s+applicants?/i.test(candidate)) return "";
+  if (/^(easy apply|promoted|actively reviewing)$/i.test(candidate)) return "";
+  return candidate;
+}
+
+function fallbackCompanyFromDocumentTitle() {
+  const title = compact(document.title.replace(/\s*\|\s*LinkedIn\s*$/, ""));
+  if (!title) return "";
+
+  const atMatch = title.match(/\bat\s+(.+)$/i);
+  if (atMatch?.[1]) {
+    return sanitizeCompanyName(atMatch[1]);
+  }
+
+  const parts = title.split(" - ").map((part) => compact(part)).filter(Boolean);
+  if (parts.length >= 2) {
+    return sanitizeCompanyName(parts[parts.length - 1]);
+  }
+
+  return "";
+}
+
+function readText(el) {
+  if (!el) return "";
+  return compact(el.innerText || el.textContent || "");
+}
+
+function htmlToText(html) {
+  if (!html) return "";
+  const node = document.createElement("div");
+  node.innerHTML = html;
+  return readText(node);
+}
+
+function isJobPostingType(typeValue) {
+  if (typeof typeValue === "string") {
+    return typeValue.toLowerCase() === "jobposting";
+  }
+  if (Array.isArray(typeValue)) {
+    return typeValue.some((entry) => typeof entry === "string" && entry.toLowerCase() === "jobposting");
+  }
+  return false;
+}
+
+function findJobPostingNode(node) {
+  if (!node) return null;
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      const found = findJobPostingNode(entry);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof node !== "object") return null;
+  if (isJobPostingType(node["@type"])) return node;
+  if (Array.isArray(node["@graph"])) return findJobPostingNode(node["@graph"]);
+  return null;
+}
+
+function extractFromJsonLd() {
+  const scripts = Array.from(document.querySelectorAll("script[type='application/ld+json']"));
+  const best = { company: "", description: "" };
+
+  for (const script of scripts) {
+    const raw = script.textContent;
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+      const posting = findJobPostingNode(parsed);
+      if (!posting) continue;
+
+      const company =
+        sanitizeCompanyName(posting?.hiringOrganization?.name)
+        || sanitizeCompanyName(posting?.hiringOrganization?.legalName)
+        || sanitizeCompanyName(posting?.employerOverview?.name)
+        || "";
+
+      const description = htmlToText(posting?.description || posting?.jobDescription || "");
+
+      if (company && !best.company) {
+        best.company = company;
+      }
+      if (description && description.length > best.description.length) {
+        best.description = description;
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  return best;
+}
+
 function fallbackCompanyFromTopCard() {
   const topCard = document.querySelector(".jobs-unified-top-card")
     || document.querySelector(".job-details-jobs-unified-top-card__container")
@@ -32,7 +130,7 @@ function fallbackCompanyFromTopCard() {
 
   const companyAnchor = topCard.querySelector("a[href*='/company/']");
   if (companyAnchor && companyAnchor.textContent) {
-    return compact(companyAnchor.textContent);
+    return sanitizeCompanyName(companyAnchor.textContent);
   }
 
   const lines = topCard.innerText
@@ -44,7 +142,7 @@ function fallbackCompanyFromTopCard() {
     if (line.includes("·")) {
       const maybeCompany = compact(line.split("·")[0]);
       if (maybeCompany && !/\d/.test(maybeCompany)) {
-        return maybeCompany;
+        return sanitizeCompanyName(maybeCompany);
       }
     }
   }
@@ -59,17 +157,62 @@ function fallbackDescriptionFromPanel() {
     || document.querySelector(".job-view-layout");
   if (!panel || !panel.textContent) return "";
 
+  const targeted = textFromSelectors([
+    ".jobs-description-content__text",
+    ".jobs-description-content__text--stretch",
+    ".jobs-box__html-content",
+    ".job-details-about-the-job-module__description",
+    "[data-test-job-description]",
+    "[class*='show-more-less-html__markup']",
+    "[class*='jobs-description-content']",
+  ]);
+  if (targeted && targeted.length >= 80) {
+    return targeted;
+  }
+
   const text = compact(panel.innerText);
   if (!text) return "";
 
-  const aboutIndex = text.toLowerCase().indexOf("about the job");
-  const candidate = aboutIndex >= 0 ? text.slice(aboutIndex) : text;
+  const lowered = text.toLowerCase();
+  const anchors = ["about the job", "job description", "about this role", "responsibilities"];
 
-  // Avoid tiny fragments from loading placeholders.
-  return candidate.length >= 120 ? candidate : "";
+  for (const anchor of anchors) {
+    const index = lowered.indexOf(anchor);
+    if (index >= 0) {
+      const candidate = compact(text.slice(index));
+      if (candidate.length >= 80) {
+        return candidate;
+      }
+    }
+  }
+
+  return text.length >= 160 ? text : "";
+}
+
+function fallbackDescriptionFromPage() {
+  const body = document.body;
+  if (!body) return "";
+
+  const text = compact(body.innerText || "");
+  if (!text) return "";
+
+  const lowered = text.toLowerCase();
+  const aboutIndex = lowered.indexOf("about the job");
+  if (aboutIndex >= 0) {
+    return compact(text.slice(aboutIndex, Math.min(text.length, aboutIndex + 5000)));
+  }
+
+  const descriptionIndex = lowered.indexOf("job description");
+  if (descriptionIndex >= 0) {
+    return compact(text.slice(descriptionIndex, Math.min(text.length, descriptionIndex + 5000)));
+  }
+
+  return text.length >= 300 ? text.slice(0, 3000) : "";
 }
 
 function extractJobDetails() {
+  const jsonLd = extractFromJsonLd();
+
   const title = textFromSelectors([
     ".job-details-jobs-unified-top-card__job-title h1",
     ".job-details-jobs-unified-top-card__job-title",
@@ -85,8 +228,13 @@ function extractJobDetails() {
     ".job-details-jobs-unified-top-card__company-name-link",
     ".jobs-unified-top-card__company-name a",
     ".jobs-unified-top-card__company-name",
+    ".job-details-jobs-unified-top-card__primary-description a[href*='/company/']",
     ".jobs-unified-top-card__primary-description-without-tagline a[href*='/company/']",
     ".jobs-unified-top-card__subtitle-primary-grouping a[href*='/company/']",
+    ".jobs-unified-top-card__subtitle-container a[href*='/company/']",
+    "[data-test-id='job-details-company-name']",
+    ".jobs-details-top-card__company-url",
+    "[class*='top-card'] a[href*='/company/']",
     "a[href*='/company/'] span",
     "a[href*='/company/']"
   ]);
@@ -105,18 +253,26 @@ function extractJobDetails() {
     || document.querySelector(".jobs-description__content")
     || document.querySelector(".jobs-box__html-content")
     || document.querySelector(".job-details-about-the-job-module__description")
+    || document.querySelector("[class*='show-more-less-html__markup']")
+    || document.querySelector("[class*='jobs-description-content']")
     || document.querySelector(".jobs-description")
     || document.querySelector("[data-test-job-description]");
-  const descriptionRaw = descriptionNode
-    ? compact(descriptionNode.innerText)
-    : fallbackDescriptionFromPanel();
+  const descriptionRaw = descriptionNode ? compact(descriptionNode.innerText) : "";
 
   return {
     title: title || document.title.replace(/\s*\|\s*LinkedIn\s*$/, "").trim(),
-    company: company || fallbackCompanyFromTopCard(),
+    company:
+      sanitizeCompanyName(company)
+      || fallbackCompanyFromTopCard()
+      || jsonLd.company
+      || fallbackCompanyFromDocumentTitle(),
     location,
     job_url: canonicalJobUrl(),
-    description_raw: descriptionRaw
+    description_raw:
+      descriptionRaw
+      || jsonLd.description
+      || fallbackDescriptionFromPanel()
+      || fallbackDescriptionFromPage()
   };
 }
 
