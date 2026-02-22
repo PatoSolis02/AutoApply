@@ -31,7 +31,7 @@ Date: `<YYYY-MM-DD>`
 
 ## 5) Contract/API Drift Notes
 
-- Any mismatch noticed vs `docs/BUILD_CONTRACT.md`.
+- Any mismatch noticed vs `docs/architecture/BUILD_CONTRACT.md`.
 - Proposed contract deltas (if needed).
 
 ## 6) Quality and Risk Notes

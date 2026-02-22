@@ -6,7 +6,7 @@ Date: `2026-02-21`
 
 ## 1) Scope Executed
 
-- Requested: execute WS-C kickoff only (tailoring, render model, PDF artifacts, and generate endpoint contract behavior) under `docs/BUILD_CONTRACT.md` and `docs/SAFETY_COMPLIANCE.md`.
+- Requested: execute WS-C kickoff only (tailoring, render model, PDF artifacts, and generate endpoint contract behavior) under `docs/architecture/BUILD_CONTRACT.md` and `docs/architecture/SAFETY_COMPLIANCE.md`.
 - Implemented in this closeout pass:
 - Fixed WS-C runtime compatibility for UTC timestamps on Python 3.9.
 - Added deterministic/contract-focused API handler tests for `POST /api/v1/applications/{id}/resume-versions/generate`.

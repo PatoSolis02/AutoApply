@@ -37,7 +37,7 @@ Date: `<YYYY-MM-DD>`
 
 ## 6) Contract and Runtime Notes
 
-- Any mismatch observed vs `docs/BUILD_CONTRACT.md`.
+- Any mismatch observed vs `docs/architecture/BUILD_CONTRACT.md`.
 - Runtime behavior surprises found during manual testing.
 - Proposed contract deltas (if needed).
 

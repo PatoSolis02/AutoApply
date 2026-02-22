@@ -5,9 +5,9 @@
 1. Read and synthesized all docs under `docs/` (PRD, system design, data model, phase plan, safety/compliance, implementation guidance).
 2. Defined architecture-owner model and controlled parallel execution strategy.
 3. Authored contract and workstream docs:
-   - `docs/BUILD_CONTRACT.md`
-   - `docs/PARALLEL_WORKSTREAMS.md`
-   - `docs/THREAD_KICKOFFS.md`
+   - `docs/architecture/BUILD_CONTRACT.md`
+   - `docs/process/PARALLEL_WORKSTREAMS.md`
+   - `docs/process/THREAD_KICKOFFS.md`
 4. Generated kickoff prompts for each thread (WS-A..WS-D).
 5. Encountered branch collisions because threads initially used same checkout.
 6. Corrected strategy to use `git worktree` per thread.

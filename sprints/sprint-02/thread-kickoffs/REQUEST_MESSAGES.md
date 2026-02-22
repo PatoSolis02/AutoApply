@@ -12,8 +12,8 @@ Do not use previous sprint threads or branches.
 Sprint trunk is `codex/integration`; your branch will be merged into that trunk.
 
 Read and follow:
-- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md
-- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md
+- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md
+- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md
 - /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/PLAN.md
 
 Implement only S2-A scope:
@@ -50,8 +50,8 @@ Do not use previous sprint threads or branches.
 Sprint trunk is `codex/integration`; your branch will be merged into that trunk.
 
 Read and follow:
-- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md
-- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md
+- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md
+- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md
 - /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/PLAN.md
 
 Implement only S2-B scope:
@@ -85,7 +85,7 @@ Do not use previous sprint threads or branches.
 Sprint trunk is `codex/integration`; your branch will be merged into that trunk.
 
 Read and follow:
-- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md
+- /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md
 - /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/PLAN.md
 
 Implement only S2-C scope:

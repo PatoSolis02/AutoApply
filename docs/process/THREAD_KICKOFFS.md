@@ -8,8 +8,8 @@ You are implementing WS-A for AutoApply.
 
 Must follow:
 
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md`
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md`
 
 Build:
 
@@ -35,8 +35,8 @@ You are implementing WS-B for AutoApply.
 
 Must follow:
 
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md`
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md`
 
 Build:
 
@@ -63,8 +63,8 @@ You are implementing WS-C for AutoApply.
 
 Must follow:
 
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md`
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md`
 
 Build:
 
@@ -91,8 +91,8 @@ You are implementing WS-D for AutoApply.
 
 Must follow:
 
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/BUILD_CONTRACT.md`
-- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/SAFETY_COMPLIANCE.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/BUILD_CONTRACT.md`
+- `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/docs/architecture/SAFETY_COMPLIANCE.md`
 
 Build:
 
