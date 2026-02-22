@@ -46,7 +46,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const text = await response.text();
-  const data = text ? (JSON.parse(text) as unknown) : undefined;
+  let data: unknown;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      const isLikelyHtml = text.trimStart().startsWith('<');
+      const detail = isLikelyHtml
+        ? 'Received HTML instead of JSON from the API. Ensure backend is running on 127.0.0.1:8000 and Vite proxy is active.'
+        : 'Received a non-JSON API response.';
+      throw new ApiError(response.status, detail, {
+        contentType: response.headers.get('content-type'),
+      });
+    }
+  }
 
   if (!response.ok) {
     const message =
