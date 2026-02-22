@@ -16,9 +16,39 @@ function queryActiveTab() {
 
 function extractFromTab(tabId) {
   return new Promise((resolve) => {
+    function sendExtract() {
+      chrome.tabs.sendMessage(tabId, { type: "EXTRACT_JOB" }, (response) => {
+        const runtimeError = chrome.runtime?.lastError;
+        if (runtimeError?.message) {
+          resolve({
+            ok: false,
+            error: `${runtimeError.message}. Refresh the LinkedIn tab and try again.`
+          });
+          return;
+        }
+
+        if (!response) {
+          resolve({
+            ok: false,
+            error: "No response from page. Refresh the LinkedIn tab and try again."
+          });
+          return;
+        }
+
+        resolve(response);
+      });
+    }
+
+    // If the content script isn't attached (common after extension reload),
+    // inject it on-demand and retry once.
     chrome.tabs.sendMessage(tabId, { type: "EXTRACT_JOB" }, (response) => {
       const runtimeError = chrome.runtime?.lastError;
-      if (runtimeError?.message) {
+      if (!runtimeError?.message) {
+        resolve(response || { ok: false, error: "No response from page." });
+        return;
+      }
+
+      if (!runtimeError.message.includes("Receiving end does not exist")) {
         resolve({
           ok: false,
           error: `${runtimeError.message}. Refresh the LinkedIn tab and try again.`
@@ -26,15 +56,17 @@ function extractFromTab(tabId) {
         return;
       }
 
-      if (!response) {
-        resolve({
-          ok: false,
-          error: "No response from page. Refresh the LinkedIn tab and try again."
-        });
-        return;
-      }
-
-      resolve(response);
+      chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] }, () => {
+        const injectError = chrome.runtime?.lastError;
+        if (injectError?.message) {
+          resolve({
+            ok: false,
+            error: `${injectError.message}. Refresh the LinkedIn tab and try again.`
+          });
+          return;
+        }
+        sendExtract();
+      });
     });
   });
 }
