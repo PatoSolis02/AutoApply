@@ -6,10 +6,10 @@ Use these prompts verbatim in each thread.
 
 ```text
 Sprint 2 is closed. Please write your Sprint 2 thread reflection into:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/<S2-THREAD>.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/<S2-THREAD>.md
 
 Use this template exactly:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/TEMPLATE.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/TEMPLATE.md
 
 Requirements:
 - Include branch, worktree path, and final commit hash.
@@ -22,10 +22,10 @@ Requirements:
 
 ```text
 Sprint 2 is closed. Please write your S2-A reflection to:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/S2-A.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/S2-A.md
 
 Use:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/TEMPLATE.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/TEMPLATE.md
 
 Include:
 - branch, worktree path, final commit hash
@@ -40,10 +40,10 @@ Include:
 
 ```text
 Sprint 2 is closed. Please write your S2-B reflection to:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/S2-B.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/S2-B.md
 
 Use:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/TEMPLATE.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/TEMPLATE.md
 
 Include:
 - branch, worktree path, final commit hash
@@ -58,10 +58,10 @@ Include:
 
 ```text
 Sprint 2 is closed. Please write your S2-C reflection to:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/S2-C.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/S2-C.md
 
 Use:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/TEMPLATE.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/TEMPLATE.md
 
 Include:
 - branch, worktree path, final commit hash
@@ -76,10 +76,10 @@ Include:
 
 ```text
 Sprint 2 is closed. Please write your S2-D reflection to:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/S2-D.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/S2-D.md
 
 Use:
-/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_integration/sprints/sprint-02/thread-reflections/TEMPLATE.md
+/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/AutoApply/sprints/sprint-02/thread-reflections/TEMPLATE.md
 
 Include:
 - branch, worktree path, final commit hash
