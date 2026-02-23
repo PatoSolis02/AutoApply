@@ -1,7 +1,11 @@
 import {
+  AuditExportPayload,
   ApplicationDetail,
   ApplicationSummary,
   ApplicationStatus,
+  CaptureJobRequest,
+  CaptureJobResponse,
+  GenerateResumeVersionResponse,
   PaginatedResponse,
   ResumeTimelineEntry,
   ResumeVersionDetail,
@@ -137,6 +141,23 @@ export async function getResumeTimeline(applicationId: string): Promise<ResumeTi
   return normalizeCollection<ResumeTimelineEntry>(payload);
 }
 
+export async function captureJob(payload: CaptureJobRequest): Promise<CaptureJobResponse> {
+  return request<CaptureJobResponse>('/jobs/capture', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateResumeVersion(
+  applicationId: string,
+  templateId: string,
+): Promise<GenerateResumeVersionResponse> {
+  return request<GenerateResumeVersionResponse>(`/applications/${applicationId}/resume-versions/generate`, {
+    method: 'POST',
+    body: JSON.stringify({ template_id: templateId }),
+  });
+}
+
 export async function getResumeVersion(resumeVersionId: string): Promise<ResumeVersionDetail> {
   return request<ResumeVersionDetail>(`/resume-versions/${resumeVersionId}`);
 }
@@ -156,4 +177,8 @@ export async function upsertUserProfile(payload: UpsertUserProfileRequest): Prom
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export async function getApplicationAuditExport(applicationId: string): Promise<AuditExportPayload> {
+  return request<AuditExportPayload>(`/applications/${applicationId}/audit-export`);
 }

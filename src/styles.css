@@ -142,6 +142,13 @@ ul {
   margin-top: 0.6rem;
 }
 
+.compact-label {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  color: var(--steel);
+}
+
 select,
 button,
 input,
@@ -229,6 +236,23 @@ button:disabled {
   border: 1px dashed #b8c7d9;
   border-radius: 12px;
   padding: 0.7rem;
+}
+
+.claim-card-danger {
+  border-color: #d97d7d;
+  background: #fff8f8;
+}
+
+.audit-export {
+  max-height: 20rem;
+  overflow: auto;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #fbfdff;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  margin-top: 0.8rem;
 }
 
 .ghost-link {

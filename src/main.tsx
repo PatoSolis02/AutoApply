@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
+import { CapturePage } from './pages/CapturePage';
 import { ApplicationDetailPage } from './pages/ApplicationDetailPage';
 import { ApplicationListPage } from './pages/ApplicationListPage';
 import { ProfilePage } from './pages/ProfilePage';
@@ -15,6 +16,10 @@ const router = createBrowserRouter([
   {
     path: '/applications',
     element: <ApplicationListPage />,
+  },
+  {
+    path: '/capture',
+    element: <CapturePage />,
   },
   {
     path: '/applications/:applicationId',
