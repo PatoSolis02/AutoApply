@@ -254,6 +254,27 @@ button:disabled {
   font-weight: 700;
 }
 
+.diagnostics-panel {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.diagnostics-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.7rem;
+}
+
+.diagnostics-list > div {
+  border: 1px dashed #c1cfdf;
+  border-radius: 12px;
+  padding: 0.6rem;
+}
+
+.diagnostics-list p {
+  margin: 0 0 0.45rem;
+}
+
 @media (max-width: 760px) {
   .hero {
     display: grid;
