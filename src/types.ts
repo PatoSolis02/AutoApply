@@ -83,6 +83,34 @@ export interface ResumeVersionDetail extends ResumeTimelineEntry {
   claims_map: ResumeClaim[];
 }
 
+export interface ProfileExperience extends Record<string, unknown> {
+  id?: string;
+  company?: string;
+  title?: string;
+  start_date?: string;
+  end_date?: string | null;
+  bullets?: string[];
+  skills?: string[];
+}
+
+export interface ProfileProject extends Record<string, unknown> {
+  id?: string;
+  name?: string;
+  description?: string;
+  bullets?: string[];
+  skills?: string[];
+  url?: string | null;
+}
+
+export interface ProfileEducation extends Record<string, unknown> {
+  id?: string;
+  school?: string;
+  degree?: string;
+  field?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   page?: number;
@@ -95,10 +123,10 @@ export interface UserProfile {
   full_name: string;
   headline: string | null;
   summary: string | null;
-  experiences: Array<Record<string, unknown>>;
-  projects: Array<Record<string, unknown>>;
+  experiences: ProfileExperience[];
+  projects: ProfileProject[];
   skills: string[];
-  education: Array<Record<string, unknown>>;
+  education: ProfileEducation[];
   updated_at: string;
 }
 
@@ -107,8 +135,13 @@ export interface UpsertUserProfileRequest {
   full_name: string;
   headline?: string | null;
   summary?: string | null;
-  experiences?: Array<Record<string, unknown>>;
-  projects?: Array<Record<string, unknown>>;
+  experiences?: ProfileExperience[];
+  projects?: ProfileProject[];
   skills?: string[];
-  education?: Array<Record<string, unknown>>;
+  education?: ProfileEducation[];
+}
+
+export interface ResumeIngestResult {
+  profile: UpsertUserProfileRequest;
+  warnings: string[];
 }

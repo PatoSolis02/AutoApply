@@ -244,6 +244,49 @@ button:disabled {
   gap: 0.8rem;
 }
 
+.section-stack {
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  padding: 0.8rem;
+  background: #fbfdff;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.7rem;
+}
+
+.entry-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.entry-card {
+  border: 1px solid #d2ddea;
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #ffffff;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.advanced-panel {
+  margin-top: 1rem;
+  border: 1px dashed #b7c8dc;
+  border-radius: 12px;
+  padding: 0.8rem;
+  background: #f9fcff;
+}
+
+.advanced-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 0.55rem;
+}
+
 .form-grid label {
   display: grid;
   gap: 0.35rem;
