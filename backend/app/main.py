@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 from http import HTTPStatus
@@ -26,6 +27,7 @@ _APPLICATION_ID_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)$")
 _APPLICATION_STATUS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/status$")
 _APPLICATION_RESUME_VERSIONS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions$")
 _APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions/generate$")
+_APPLICATION_AUDIT_EXPORT_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/audit-export$")
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
 _PROFILE_PATH = "/api/v1/profile"
@@ -80,6 +82,11 @@ def _build_handler(capture_db: CaptureDatabase):
             match = _APPLICATION_RESUME_VERSIONS_PATTERN.match(parsed.path)
             if match:
                 self._handle_get_resume_versions_for_application(match.group(1))
+                return
+
+            match = _APPLICATION_AUDIT_EXPORT_PATTERN.match(parsed.path)
+            if match:
+                self._handle_application_audit_export(match.group(1))
                 return
 
             match = _RESUME_VERSION_PATTERN.match(parsed.path)
@@ -300,6 +307,25 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
             _json_response(self, HTTPStatus.OK, resume_version)
+
+        def _handle_application_audit_export(self, application_id: str) -> None:
+            try:
+                application = capture_db.get_application(application_id)
+                job_posting = capture_db.get_job_posting_for_application(application_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
+                return
+
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "application": application,
+                    "job_posting": job_posting,
+                    "resume_versions": capture_db.list_resume_versions_for_application(application_id),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
 
         def _handle_generate_resume_version(self, application_id: str) -> None:
             payload = self._read_json_object()
