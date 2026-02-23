@@ -111,6 +111,39 @@ export interface ProfileEducation extends Record<string, unknown> {
   end_date?: string | null;
 }
 
+export interface GenerateResumeVersionResponse {
+  resume_version_id: string;
+  warnings: string[];
+  blocked_reasons: string[];
+}
+
+export interface CaptureJobRequest {
+  title: string;
+  company: string;
+  location: string | null;
+  job_url: string;
+  description_raw: string;
+  captured_at: string;
+}
+
+export interface CaptureJobResponse {
+  application_id: string;
+  job_posting_id: string;
+}
+
+export interface AuditExportPayload {
+  application: ApplicationDetail;
+  job_posting: {
+    id: string;
+    application_id: string;
+    raw_text: string;
+    structured_json: Record<string, unknown>;
+    captured_at: string;
+  };
+  resume_versions: ResumeVersionDetail[];
+  generated_at: string;
+}
+
 export interface PaginatedResponse<T> {
   items: T[];
   page?: number;

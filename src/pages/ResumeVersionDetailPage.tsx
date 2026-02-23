@@ -3,7 +3,15 @@ import { Link, useParams } from 'react-router-dom';
 import { AsyncBlock } from '../components/AsyncBlock';
 import { Layout } from '../components/Layout';
 import { ApiError, approveResumeVersion, errorMessageForStatus, getResumeVersion } from '../lib/api';
+import { ResumeClaim } from '../types';
 import { ResumeVersionDetail } from '../types';
+
+function sortClaimsBySeverity(claims: ResumeClaim[]): ResumeClaim[] {
+  return [...claims].sort((left, right) => {
+    if (left.verification_status === right.verification_status) return 0;
+    return left.verification_status === 'rejected' ? -1 : 1;
+  });
+}
 
 export function ResumeVersionDetailPage() {
   const { applicationId, resumeVersionId } = useParams();
@@ -77,6 +85,12 @@ export function ResumeVersionDetailPage() {
               <p className="muted">Created: {new Date(version.created_at).toLocaleString()}</p>
               <p className="muted">HTML: {version.rendered_html_path}</p>
               <p className="muted">PDF: {version.pdf_path}</p>
+              <p>
+                Approval:{' '}
+                <span className={version.approval.approved ? 'badge good' : 'badge pending'}>
+                  {version.approval.approved ? 'Approved' : 'Pending'}
+                </span>
+              </p>
               <button type="button" onClick={handleApprove} disabled={approving || version.approval.approved}>
                 {version.approval.approved ? 'Approved' : approving ? 'Approving...' : 'Approve Resume Version'}
               </button>
@@ -85,6 +99,9 @@ export function ResumeVersionDetailPage() {
 
             <section className="panel">
               <h2>Change Log</h2>
+              <p className="tiny muted">
+                Total changes tracked: {version.change_log.added.length + version.change_log.removed.length + version.change_log.reworded.length}
+              </p>
               <h3>Added</h3>
               <ul>
                 {version.change_log.added.length ? (
@@ -117,23 +134,34 @@ export function ResumeVersionDetailPage() {
 
             <section className="panel">
               <h2>Claims Map</h2>
-              <div className="claims-grid">
-                {version.claims_map.map((claim) => (
-                  <article className="claim-card" key={claim.bullet_id}>
-                    <p>
-                      <strong>{claim.bullet_id}</strong>
-                    </p>
-                    <p>{claim.bullet_text}</p>
-                    <p className="muted">
-                      Source: {claim.source_type} / {claim.source_id}
-                    </p>
-                    <p className="muted">Evidence: {claim.evidence_text}</p>
-                    <span className={claim.verification_status === 'supported' ? 'badge good' : 'badge danger'}>
-                      {claim.verification_status}
-                    </span>
-                  </article>
-                ))}
-              </div>
+              <p className="tiny mono">
+                supported={version.claims_map.filter((claim) => claim.verification_status === 'supported').length} | rejected=
+                {version.claims_map.filter((claim) => claim.verification_status === 'rejected').length}
+              </p>
+              {version.claims_map.length ? (
+                <div className="claims-grid">
+                  {sortClaimsBySeverity(version.claims_map).map((claim) => (
+                    <article
+                      className={claim.verification_status === 'supported' ? 'claim-card' : 'claim-card claim-card-danger'}
+                      key={claim.bullet_id}
+                    >
+                      <p>
+                        <strong>{claim.bullet_id}</strong>
+                      </p>
+                      <p>{claim.bullet_text}</p>
+                      <p className="muted">
+                        Source: {claim.source_type} / {claim.source_id}
+                      </p>
+                      <p className="muted">Evidence: {claim.evidence_text}</p>
+                      <span className={claim.verification_status === 'supported' ? 'badge good' : 'badge danger'}>
+                        {claim.verification_status}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">No claims map entries were produced for this version.</p>
+              )}
             </section>
           </>
         ) : null}

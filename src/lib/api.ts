@@ -1,7 +1,11 @@
 import {
+  AuditExportPayload,
   ApplicationDetail,
   ApplicationSummary,
   ApplicationStatus,
+  CaptureJobRequest,
+  CaptureJobResponse,
+  GenerateResumeVersionResponse,
   PaginatedResponse,
   ResumeIngestResult,
   ResumeTimelineEntry,
@@ -11,7 +15,8 @@ import {
 } from '../types';
 
 const API_BASE = '/api/v1';
-const PROFILE_INGEST_PATH = (import.meta.env.VITE_PROFILE_INGEST_PATH as string | undefined) ?? '/profile/ingest';
+const PROFILE_PARSE_PATH = (import.meta.env.VITE_PROFILE_INGEST_PATH as string | undefined) ?? '/profile/resume-parse';
+const PROFILE_PARSE_LEGACY_PATH = '/profile/ingest';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -190,6 +195,23 @@ export async function getResumeTimeline(applicationId: string): Promise<ResumeTi
   return normalizeCollection<ResumeTimelineEntry>(payload);
 }
 
+export async function captureJob(payload: CaptureJobRequest): Promise<CaptureJobResponse> {
+  return request<CaptureJobResponse>('/jobs/capture', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function generateResumeVersion(
+  applicationId: string,
+  templateId: string,
+): Promise<GenerateResumeVersionResponse> {
+  return request<GenerateResumeVersionResponse>(`/applications/${applicationId}/resume-versions/generate`, {
+    method: 'POST',
+    body: JSON.stringify({ template_id: templateId }),
+  });
+}
+
 export async function getResumeVersion(resumeVersionId: string): Promise<ResumeVersionDetail> {
   return request<ResumeVersionDetail>(`/resume-versions/${resumeVersionId}`);
 }
@@ -211,14 +233,26 @@ export async function upsertUserProfile(payload: UpsertUserProfileRequest): Prom
   });
 }
 
-export async function uploadResumeToProfile(file: File): Promise<ResumeIngestResult> {
+async function parseResumeUpload(path: string, file: File): Promise<unknown> {
   const formData = new FormData();
+  formData.append('file', file);
   formData.append('resume', file);
-
-  const payload = await request<unknown>(PROFILE_INGEST_PATH, {
+  return request<unknown>(path, {
     method: 'POST',
     body: formData,
   });
+}
+
+export async function uploadResumeToProfile(file: File): Promise<ResumeIngestResult> {
+  let payload: unknown;
+  try {
+    payload = await parseResumeUpload(PROFILE_PARSE_PATH, file);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404 || PROFILE_PARSE_PATH === PROFILE_PARSE_LEGACY_PATH) {
+      throw error;
+    }
+    payload = await parseResumeUpload(PROFILE_PARSE_LEGACY_PATH, file);
+  }
 
   const envelope = asObject(payload);
   const draft =
@@ -236,4 +270,8 @@ export async function uploadResumeToProfile(file: File): Promise<ResumeIngestRes
 
   const warnings = readStringArray(envelope?.warnings);
   return { profile: draft, warnings };
+}
+
+export async function getApplicationAuditExport(applicationId: string): Promise<AuditExportPayload> {
+  return request<AuditExportPayload>(`/applications/${applicationId}/audit-export`);
 }

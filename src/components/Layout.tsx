@@ -12,11 +12,14 @@ export function Layout({ title, subtitle, children }: LayoutProps) {
     <div className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">AutoApply WS-B</p>
+          <p className="eyebrow">AutoApply S4-C Workflow</p>
           <h1>{title}</h1>
           <p>{subtitle}</p>
         </div>
         <nav className="hero-nav" aria-label="Primary">
+          <Link className="ghost-link" to="/capture">
+            Capture
+          </Link>
           <Link className="ghost-link" to="/applications">
             Applications
           </Link>

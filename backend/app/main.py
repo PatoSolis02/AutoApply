@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import cgi
-import io
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.parser import BytesParser
+from email.policy import default as email_policy_default
 import json
 import os
 from http import HTTPStatus
@@ -34,6 +36,7 @@ _APPLICATION_ID_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)$")
 _APPLICATION_STATUS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/status$")
 _APPLICATION_RESUME_VERSIONS_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions$")
 _APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resume-versions/generate$")
+_APPLICATION_AUDIT_EXPORT_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/audit-export$")
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
 _PROFILE_PATH = "/api/v1/profile"
@@ -48,6 +51,13 @@ _ALLOWED_STATUSES = {
     "rejected",
     "offer",
 }
+
+
+@dataclass
+class _UploadedFormFile:
+    filename: str
+    content_type: str | None
+    payload: bytes
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, body: dict[str, Any]) -> None:
@@ -89,6 +99,11 @@ def _build_handler(capture_db: CaptureDatabase):
             match = _APPLICATION_RESUME_VERSIONS_PATTERN.match(parsed.path)
             if match:
                 self._handle_get_resume_versions_for_application(match.group(1))
+                return
+
+            match = _APPLICATION_AUDIT_EXPORT_PATTERN.match(parsed.path)
+            if match:
+                self._handle_application_audit_export(match.group(1))
                 return
 
             match = _RESUME_VERSION_PATTERN.match(parsed.path)
@@ -314,6 +329,25 @@ def _build_handler(capture_db: CaptureDatabase):
                 return
             _json_response(self, HTTPStatus.OK, resume_version)
 
+        def _handle_application_audit_export(self, application_id: str) -> None:
+            try:
+                application = capture_db.get_application(application_id)
+                job_posting = capture_db.get_job_posting_for_application(application_id)
+            except DbNotFoundError as err:
+                _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
+                return
+
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "application": application,
+                    "job_posting": job_posting,
+                    "resume_versions": capture_db.list_resume_versions_for_application(application_id),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+
         def _handle_generate_resume_version(self, application_id: str) -> None:
             payload = self._read_json_object()
             if payload is None:
@@ -371,7 +405,9 @@ def _build_handler(capture_db: CaptureDatabase):
             if form is None:
                 return
 
-            if "file" not in form:
+            fields, files = form
+
+            if "file" not in files:
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -382,15 +418,12 @@ def _build_handler(capture_db: CaptureDatabase):
                 )
                 return
 
-            upload_field = form["file"]
-            if isinstance(upload_field, list):
-                upload_field = upload_field[0]
+            upload_field = files["file"]
+            filename = upload_field.filename
+            payload = upload_field.payload
+            upload_content_type = upload_field.content_type
 
-            filename = getattr(upload_field, "filename", None)
-            payload = upload_field.file.read() if getattr(upload_field, "file", None) is not None else b""
-            upload_content_type = getattr(upload_field, "type", None)
-
-            if not isinstance(filename, str) or not filename.strip():
+            if not filename.strip():
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
@@ -411,10 +444,10 @@ def _build_handler(capture_db: CaptureDatabase):
                 )
                 return
 
-            profile_id_raw = form.getvalue("profile_id")
+            profile_id_raw = fields.get("profile_id")
             profile_id = "primary"
             if profile_id_raw is not None:
-                if not isinstance(profile_id_raw, str) or not profile_id_raw.strip():
+                if not profile_id_raw.strip():
                     _json_response(
                         self,
                         HTTPStatus.BAD_REQUEST,
@@ -452,7 +485,7 @@ def _build_handler(capture_db: CaptureDatabase):
 
             _json_response(self, HTTPStatus.OK, parsed)
 
-        def _read_multipart_form(self) -> cgi.FieldStorage | None:
+        def _read_multipart_form(self) -> tuple[dict[str, str], dict[str, _UploadedFormFile]] | None:
             content_type = self.headers.get("Content-Type", "")
             if not content_type.lower().startswith("multipart/form-data"):
                 _json_response(
@@ -476,17 +509,39 @@ def _build_handler(capture_db: CaptureDatabase):
                 return None
 
             raw_body = self.rfile.read(length)
-            environ = {
-                "REQUEST_METHOD": "POST",
-                "CONTENT_TYPE": content_type,
-                "CONTENT_LENGTH": str(length),
-            }
-            return cgi.FieldStorage(
-                fp=io.BytesIO(raw_body),
-                headers=self.headers,
-                environ=environ,
-                keep_blank_values=True,
+            parse_bytes = (
+                f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8")
+                + raw_body
             )
+            message = BytesParser(policy=email_policy_default).parsebytes(parse_bytes)
+
+            if not message.is_multipart():
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return None
+
+            fields: dict[str, str] = {}
+            files: dict[str, _UploadedFormFile] = {}
+
+            for part in message.iter_parts():
+                if part.get_content_disposition() != "form-data":
+                    continue
+                name = part.get_param("name", header="Content-Disposition")
+                if not isinstance(name, str) or not name:
+                    continue
+
+                filename = part.get_filename()
+                payload = part.get_payload(decode=True) or b""
+                if isinstance(filename, str) and filename:
+                    files[name] = _UploadedFormFile(
+                        filename=filename,
+                        content_type=part.get_content_type(),
+                        payload=payload,
+                    )
+                    continue
+
+                fields[name] = payload.decode("utf-8", errors="replace")
+
+            return fields, files
 
         def _read_json_body(self) -> object | None:
             content_length = self.headers.get("Content-Length", "0")
