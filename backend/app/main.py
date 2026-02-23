@@ -29,6 +29,7 @@ _APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resum
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
 _PROFILE_PATH = "/api/v1/profile"
+_HEALTH_PATH = "/health"
 _ALLOWED_STATUSES = {
     "captured",
     "drafting",
@@ -61,6 +62,9 @@ def _build_handler(capture_db: CaptureDatabase):
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
 
+            if parsed.path == _HEALTH_PATH:
+                self._handle_health()
+                return
             if parsed.path == "/api/v1/applications":
                 self._handle_list_applications(parsed.query)
                 return
@@ -160,6 +164,9 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
             _json_response(self, HTTPStatus.OK, profile)
+
+        def _handle_health(self) -> None:
+            _json_response(self, HTTPStatus.OK, {"status": "ok"})
 
         def _handle_upsert_profile(self) -> None:
             body = self._read_json_body()
