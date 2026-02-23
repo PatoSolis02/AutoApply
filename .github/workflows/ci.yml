@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - codex/**
+
+jobs:
+  guardrails:
+    name: Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+
+      - name: Enforce runtime baseline
+        run: python3 scripts/check_runtime_versions.py
+
+      - name: Block tracked generated/vendor artifacts
+        run: python3 scripts/check_tracked_artifacts.py
+
+  frontend:
+    name: Frontend Test + Build
+    needs: guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Frontend build
+        run: npm run build
+
+  python-tests:
+    name: Python Test Suite
+    needs: guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Domain/API tests
+        run: PYTHONPATH=. python3 -m unittest tests.test_tailoring tests.test_generation_pipeline tests.test_generation_api
+
+      - name: Compliance tests
+        run: PYTHONPATH=src python3 -m unittest tests.test_ws_d_audit_compliance
+
+      - name: Backend API tests
+        run: PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_*.py'
