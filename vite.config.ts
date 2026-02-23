@@ -15,5 +15,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    environmentOptions: {
+      jsdom: {
+        url: 'https://www.linkedin.com/jobs/search/',
+      },
+    },
   },
 });
