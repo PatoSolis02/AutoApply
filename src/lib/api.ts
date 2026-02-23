@@ -3,6 +3,7 @@ import {
   ApplicationSummary,
   ApplicationStatus,
   PaginatedResponse,
+  ResumeIngestResult,
   ResumeTimelineEntry,
   ResumeVersionDetail,
   UpsertUserProfileRequest,
@@ -10,6 +11,7 @@ import {
 } from '../types';
 
 const API_BASE = '/api/v1';
+const PROFILE_INGEST_PATH = (import.meta.env.VITE_PROFILE_INGEST_PATH as string | undefined) ?? '/profile/ingest';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -35,11 +37,13 @@ export function errorMessageForStatus(status: number): string {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!(init?.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
+    headers,
     ...init,
   });
 
@@ -73,6 +77,55 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return data as T;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+}
+
+function readObjectArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => item && typeof item === 'object' && !Array.isArray(item)) as Array<Record<string, unknown>>;
+}
+
+function readNullableString(value: unknown): string | null | undefined {
+  if (value === null || value === undefined) return value as null | undefined;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  return undefined;
+}
+
+function toProfileDraft(value: unknown): UpsertUserProfileRequest | null {
+  const source = asObject(value);
+  if (!source) return null;
+
+  const fullNameRaw = source.full_name;
+  const fullName = typeof fullNameRaw === 'string' ? fullNameRaw.trim() : '';
+  if (!fullName) return null;
+
+  const idRaw = source.id;
+  const id = typeof idRaw === 'string' && idRaw.trim() ? idRaw.trim() : undefined;
+
+  return {
+    id,
+    full_name: fullName,
+    headline: readNullableString(source.headline),
+    summary: readNullableString(source.summary),
+    skills: readStringArray(source.skills),
+    experiences: readObjectArray(source.experiences),
+    projects: readObjectArray(source.projects),
+    education: readObjectArray(source.education),
+  };
 }
 
 function normalizeCollection<T>(payload: unknown): T[] {
@@ -156,4 +209,31 @@ export async function upsertUserProfile(payload: UpsertUserProfileRequest): Prom
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export async function uploadResumeToProfile(file: File): Promise<ResumeIngestResult> {
+  const formData = new FormData();
+  formData.append('resume', file);
+
+  const payload = await request<unknown>(PROFILE_INGEST_PATH, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const envelope = asObject(payload);
+  const draft =
+    toProfileDraft(envelope?.profile) ??
+    toProfileDraft(envelope?.parsed_profile) ??
+    toProfileDraft(payload);
+
+  if (!draft) {
+    throw new ApiError(
+      502,
+      'Resume upload succeeded but the response did not include a usable profile payload from the S4-A contract.',
+      payload,
+    );
+  }
+
+  const warnings = readStringArray(envelope?.warnings);
+  return { profile: draft, warnings };
 }
