@@ -4,6 +4,7 @@ import json
 import threading
 import unittest
 from http.client import HTTPConnection
+from typing import Any
 
 from app.main import create_server
 
@@ -27,7 +28,7 @@ class ProfileApiTests(unittest.TestCase):
 
         return tempfile.mkdtemp(prefix="profile-api-tests-")
 
-    def _request_json(self, method: str, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    def _request_json(self, method: str, path: str, payload: Any = None) -> tuple[int, dict]:
         conn = HTTPConnection("127.0.0.1", self.port, timeout=5)
         body = json.dumps(payload).encode("utf-8") if payload is not None else b""
         headers = {"Content-Type": "application/json"}
@@ -87,6 +88,52 @@ class ProfileApiTests(unittest.TestCase):
         fields = {item["field"] for item in body["errors"]}
         self.assertIn("full_name", fields)
         self.assertIn("skills", fields)
+
+    def test_put_profile_defaults_primary_id_and_normalizes_optional_fields(self) -> None:
+        status, body = self._request_json(
+            "PUT",
+            "/api/v1/profile",
+            {
+                "full_name": "  Taylor Dev  ",
+                "headline": " ",
+                "skills": [" Python ", "", "SQL", "   "],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["id"], "primary")
+        self.assertEqual(body["full_name"], "Taylor Dev")
+        self.assertIsNone(body["headline"])
+        self.assertIsNone(body["summary"])
+        self.assertEqual(body["skills"], ["Python", "SQL"])
+        self.assertEqual(body["experiences"], [])
+        self.assertEqual(body["projects"], [])
+        self.assertEqual(body["education"], [])
+
+    def test_put_profile_rejects_non_object_payload(self) -> None:
+        status, body = self._request_json("PUT", "/api/v1/profile", ["not-an-object"])
+        self.assertEqual(status, 400)
+        self.assertEqual(body["detail"], "invalid request payload")
+        self.assertEqual(body["errors"], [{"field": "body", "message": "must be a JSON object"}])
+
+    def test_put_profile_rejects_invalid_optional_collections(self) -> None:
+        status, body = self._request_json(
+            "PUT",
+            "/api/v1/profile",
+            {
+                "full_name": "Taylor Dev",
+                "experiences": [{"id": "exp-1"}, "invalid"],
+                "projects": "invalid",
+                "skills": "invalid",
+                "education": [1],
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["detail"], "invalid request payload")
+        fields = {item["field"] for item in body["errors"]}
+        self.assertIn("experiences", fields)
+        self.assertIn("projects", fields)
+        self.assertIn("skills", fields)
+        self.assertIn("education", fields)
 
 
 if __name__ == "__main__":
