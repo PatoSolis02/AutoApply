@@ -211,6 +211,101 @@ class TrackingApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "ready_to_apply")
 
+    def test_status_patch_idempotent_for_same_target(self) -> None:
+        application_id = self._capture_application()
+        status, body = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            {"target_status": "drafting"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "drafting")
+
+        status, body = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            {"target_status": "drafting"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "drafting")
+        self.assertEqual(body["application"]["status"], "drafting")
+
+    def test_ready_to_apply_requires_latest_approved_resume_version(self) -> None:
+        application_id = self._capture_application()
+        status, _ = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            {"target_status": "drafting"},
+        )
+        self.assertEqual(status, 200)
+
+        self.db.insert_resume_version(
+            application_id=application_id,
+            template_id="modern",
+            render_model_json={},
+            change_log={"added": [], "removed": [], "reworded": []},
+            claims_map=[],
+            approval_approved=True,
+            approval_approved_at="2026-02-21T10:00:00+00:00",
+            created_at="2026-02-21T10:00:00+00:00",
+        )
+        latest_version_id = self.db.insert_resume_version(
+            application_id=application_id,
+            template_id="modern",
+            render_model_json={},
+            change_log={"added": [], "removed": [], "reworded": []},
+            claims_map=[],
+            approval_approved=False,
+            created_at="2026-02-21T11:00:00+00:00",
+        )
+
+        status, blocked = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            {"target_status": "ready_to_apply"},
+        )
+        self.assertEqual(status, 422)
+        self.assertIn("approval gate failed", blocked["detail"])
+
+        status, approved = self._request_json("POST", f"/api/v1/resume-versions/{latest_version_id}/approve", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(approved["approval"]["approved"])
+
+        status, body = self._request_json("GET", f"/api/v1/applications/{application_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ready_to_apply")
+
+    def test_approve_resume_version_is_idempotent(self) -> None:
+        application_id = self._capture_application()
+        status, _ = self._request_json(
+            "PATCH",
+            f"/api/v1/applications/{application_id}/status",
+            {"target_status": "drafting"},
+        )
+        self.assertEqual(status, 200)
+
+        resume_version_id = self.db.insert_resume_version(
+            application_id=application_id,
+            template_id="modern",
+            render_model_json={},
+            change_log={"added": [], "removed": [], "reworded": []},
+            claims_map=[],
+        )
+
+        status, first = self._request_json("POST", f"/api/v1/resume-versions/{resume_version_id}/approve", {})
+        self.assertEqual(status, 200)
+        first_approved_at = first["approval"]["approved_at"]
+        self.assertIsNotNone(first_approved_at)
+
+        status, second = self._request_json("POST", f"/api/v1/resume-versions/{resume_version_id}/approve", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(second["approval"]["approved"])
+        self.assertEqual(second["approval"]["approved_at"], first_approved_at)
+
+        status, body = self._request_json("GET", f"/api/v1/applications/{application_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ready_to_apply")
+
     def test_endpoints_return_404_for_missing_entities(self) -> None:
         status, body = self._request_json("GET", "/api/v1/applications/missing")
         self.assertEqual(status, 404)
