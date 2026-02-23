@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import cgi
+import io
 import json
 import os
 from http import HTTPStatus
@@ -11,6 +13,12 @@ from urllib.parse import parse_qs, urlparse
 
 from .db import CaptureDatabase, DbComplianceError, DbConflictError, DbNotFoundError
 from .ingest import build_structured_job_posting
+from .resume_ingest import (
+    ResumeParseError,
+    ResumeParseValidationError,
+    ResumeUnsupportedTypeError,
+    parse_resume_upload,
+)
 from .runtime_generation import SqliteGenerateRepository
 from .schemas import validate_capture_payload, validate_user_profile_payload
 
@@ -29,6 +37,7 @@ _APPLICATION_GENERATE_PATTERN = re.compile(r"^/api/v1/applications/([^/]+)/resum
 _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
 _PROFILE_PATH = "/api/v1/profile"
+_PROFILE_RESUME_PARSE_PATH = "/api/v1/profile/resume-parse"
 _HEALTH_PATH = "/health"
 _ALLOWED_STATUSES = {
     "captured",
@@ -109,6 +118,10 @@ def _build_handler(capture_db: CaptureDatabase):
 
             if parsed.path == "/api/v1/jobs/capture":
                 self._handle_capture()
+                return
+
+            if parsed.path == _PROFILE_RESUME_PARSE_PATH:
+                self._handle_parse_resume_upload()
                 return
 
             match = _APPLICATION_GENERATE_PATTERN.match(parsed.path)
@@ -352,6 +365,128 @@ def _build_handler(capture_db: CaptureDatabase):
                     return
 
             _json_response(self, HTTPStatus.OK, approved)
+
+        def _handle_parse_resume_upload(self) -> None:
+            form = self._read_multipart_form()
+            if form is None:
+                return
+
+            if "file" not in form:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "file", "message": "is required"}],
+                    },
+                )
+                return
+
+            upload_field = form["file"]
+            if isinstance(upload_field, list):
+                upload_field = upload_field[0]
+
+            filename = getattr(upload_field, "filename", None)
+            payload = upload_field.file.read() if getattr(upload_field, "file", None) is not None else b""
+            upload_content_type = getattr(upload_field, "type", None)
+
+            if not isinstance(filename, str) or not filename.strip():
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "file", "message": "must include a filename"}],
+                    },
+                )
+                return
+            if not payload:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "file", "message": "must not be empty"}],
+                    },
+                )
+                return
+
+            profile_id_raw = form.getvalue("profile_id")
+            profile_id = "primary"
+            if profile_id_raw is not None:
+                if not isinstance(profile_id_raw, str) or not profile_id_raw.strip():
+                    _json_response(
+                        self,
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "detail": "invalid request payload",
+                            "errors": [{"field": "profile_id", "message": "must be a non-empty string"}],
+                        },
+                    )
+                    return
+                profile_id = profile_id_raw.strip()
+
+            try:
+                parsed = parse_resume_upload(
+                    filename=filename.strip(),
+                    payload=payload,
+                    profile_id=profile_id,
+                    content_type=upload_content_type,
+                )
+            except ResumeUnsupportedTypeError as err:
+                _json_response(self, HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"detail": str(err)})
+                return
+            except ResumeParseValidationError as err:
+                _json_response(
+                    self,
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    {
+                        "detail": "parsed profile failed validation",
+                        "errors": err.errors,
+                    },
+                )
+                return
+            except ResumeParseError as err:
+                _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
+                return
+
+            _json_response(self, HTTPStatus.OK, parsed)
+
+        def _read_multipart_form(self) -> cgi.FieldStorage | None:
+            content_type = self.headers.get("Content-Type", "")
+            if not content_type.lower().startswith("multipart/form-data"):
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "detail": "invalid request payload",
+                        "errors": [{"field": "content_type", "message": "must be multipart/form-data"}],
+                    },
+                )
+                return None
+
+            content_length = self.headers.get("Content-Length", "0")
+            try:
+                length = int(content_length)
+            except ValueError:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return None
+            if length <= 0:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid request payload"})
+                return None
+
+            raw_body = self.rfile.read(length)
+            environ = {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": content_type,
+                "CONTENT_LENGTH": str(length),
+            }
+            return cgi.FieldStorage(
+                fp=io.BytesIO(raw_body),
+                headers=self.headers,
+                environ=environ,
+                keep_blank_values=True,
+            )
 
         def _read_json_body(self) -> object | None:
             content_length = self.headers.get("Content-Length", "0")
