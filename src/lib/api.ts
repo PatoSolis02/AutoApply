@@ -43,8 +43,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
-    headers,
     ...init,
+    headers,
   });
 
   if (response.status === 204) {

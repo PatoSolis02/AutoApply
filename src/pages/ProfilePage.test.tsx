@@ -11,12 +11,14 @@ vi.mock('../lib/api', async () => {
     ...actual,
     getApplications: vi.fn(),
     getUserProfile: vi.fn(),
+    uploadResumeToProfile: vi.fn(),
     upsertUserProfile: vi.fn(),
   };
 });
 
 const getApplicationsMock = vi.mocked(api.getApplications);
 const getUserProfileMock = vi.mocked(api.getUserProfile);
+const uploadResumeToProfileMock = vi.mocked(api.uploadResumeToProfile);
 const upsertUserProfileMock = vi.mocked(api.upsertUserProfile);
 
 const savedProfile: UserProfile = {
@@ -25,9 +27,37 @@ const savedProfile: UserProfile = {
   headline: 'Platform Engineer',
   summary: 'Builds reliable APIs.',
   skills: ['Python', 'TypeScript'],
-  experiences: [{ id: 'exp-1', company: 'DataCo' }],
-  projects: [{ id: 'proj-1', name: 'AutoApply' }],
-  education: [{ id: 'edu-1', school: 'RIT' }],
+  experiences: [
+    {
+      id: 'exp-1',
+      company: 'DataCo',
+      title: 'Senior Engineer',
+      start_date: '2022-01-01',
+      end_date: null,
+      bullets: ['Built APIs'],
+      skills: ['Python', 'SQL'],
+    },
+  ],
+  projects: [
+    {
+      id: 'proj-1',
+      name: 'AutoApply',
+      description: 'Personal productivity tool',
+      bullets: ['Shipped v1'],
+      skills: ['React'],
+      url: 'https://example.com/autoapply',
+    },
+  ],
+  education: [
+    {
+      id: 'edu-1',
+      school: 'RIT',
+      degree: 'BS Computer Science',
+      field: 'Computer Science',
+      start_date: '2018-09-01',
+      end_date: '2022-05-01',
+    },
+  ],
   updated_at: '2026-02-23T12:00:00Z',
 };
 
@@ -66,6 +96,19 @@ describe('ProfilePage', () => {
     });
     getUserProfileMock.mockResolvedValue(savedProfile);
     upsertUserProfileMock.mockResolvedValue(savedProfile);
+    uploadResumeToProfileMock.mockResolvedValue({
+      profile: {
+        id: 'primary',
+        full_name: 'Upload Parsed Dev',
+        headline: 'Platform Engineer',
+        summary: 'Parsed from resume.',
+        skills: ['Python'],
+        experiences: [{ company: 'ParseCo', title: 'Engineer', start_date: '2021-01-01', end_date: null }],
+        projects: [],
+        education: [],
+      },
+      warnings: [],
+    });
   });
 
   it('loads and renders profile values from /profile', async () => {
@@ -79,6 +122,8 @@ describe('ProfilePage', () => {
     expect(screen.getByText('Ready')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Platform Engineer')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Builds reliable APIs.')).toBeInTheDocument();
+    expect((screen.getByLabelText('Company 1') as HTMLInputElement).value).toBe('DataCo');
+    expect((screen.getByLabelText('Project Name 1') as HTMLInputElement).value).toBe('AutoApply');
     expect((screen.getByLabelText('Skills (newline or comma separated)') as HTMLTextAreaElement).value).toBe(
       'Python\nTypeScript',
     );
@@ -115,7 +160,7 @@ describe('ProfilePage', () => {
     expect(screen.getByText('applications unavailable')).toBeInTheDocument();
   });
 
-  it('parses JSON text fields and saves profile payload', async () => {
+  it('saves structured profile payload from form sections', async () => {
     getUserProfileMock.mockRejectedValueOnce(new api.ApiError(404, 'missing', null));
 
     renderProfilePage();
@@ -130,15 +175,23 @@ describe('ProfilePage', () => {
     fireEvent.change(screen.getByLabelText('Skills (newline or comma separated)'), {
       target: { value: 'Python, SQL\nReact' },
     });
-    fireEvent.change(screen.getByLabelText('Experiences JSON (array of objects)'), {
-      target: { value: '[{"id":"exp-2","company":"NewCo"}]' },
-    });
-    fireEvent.change(screen.getByLabelText('Projects JSON (array of objects)'), {
-      target: { value: '[{"id":"proj-2","name":"Workflow Revamp"}]' },
-    });
-    fireEvent.change(screen.getByLabelText('Education JSON (array of objects)'), {
-      target: { value: '[{"id":"edu-2","school":"RIT"}]' },
-    });
+    fireEvent.change(screen.getByLabelText('Company 1'), { target: { value: 'NewCo' } });
+    fireEvent.change(screen.getByLabelText('Title 1'), { target: { value: 'Engineer' } });
+    fireEvent.change(screen.getByLabelText('Start Date 1'), { target: { value: '2022-01-01' } });
+    fireEvent.change(screen.getByLabelText('Experience Skills 1'), { target: { value: 'Python, SQL' } });
+    fireEvent.change(screen.getByLabelText('Experience Bullets 1'), { target: { value: 'Built platform APIs' } });
+
+    fireEvent.change(screen.getByLabelText('Project Name 1'), { target: { value: 'Workflow Revamp' } });
+    fireEvent.change(screen.getByLabelText('Project Description 1'), { target: { value: 'Automation project' } });
+    fireEvent.change(screen.getByLabelText('Project Skills 1'), { target: { value: 'TypeScript, React' } });
+    fireEvent.change(screen.getByLabelText('Project URL 1'), { target: { value: 'https://example.com/project' } });
+    fireEvent.change(screen.getByLabelText('Project Bullets 1'), { target: { value: 'Cut manual steps by 60%' } });
+
+    fireEvent.change(screen.getByLabelText('School 1'), { target: { value: 'RIT' } });
+    fireEvent.change(screen.getByLabelText('Degree 1'), { target: { value: 'BS Computer Science' } });
+    fireEvent.change(screen.getByLabelText('Field 1'), { target: { value: 'Computer Science' } });
+    fireEvent.change(screen.getByLabelText('Education Start Date 1'), { target: { value: '2018-09-01' } });
+    fireEvent.change(screen.getByLabelText('Education End Date 1'), { target: { value: '2022-05-01' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Profile' }));
 
@@ -152,9 +205,34 @@ describe('ProfilePage', () => {
       headline: 'Staff Engineer',
       summary: 'Builds resilient systems.',
       skills: ['Python', 'SQL', 'React'],
-      experiences: [{ id: 'exp-2', company: 'NewCo' }],
-      projects: [{ id: 'proj-2', name: 'Workflow Revamp' }],
-      education: [{ id: 'edu-2', school: 'RIT' }],
+      experiences: [
+        {
+          company: 'NewCo',
+          title: 'Engineer',
+          start_date: '2022-01-01',
+          end_date: null,
+          bullets: ['Built platform APIs'],
+          skills: ['Python', 'SQL'],
+        },
+      ],
+      projects: [
+        {
+          name: 'Workflow Revamp',
+          description: 'Automation project',
+          bullets: ['Cut manual steps by 60%'],
+          skills: ['TypeScript', 'React'],
+          url: 'https://example.com/project',
+        },
+      ],
+      education: [
+        {
+          school: 'RIT',
+          degree: 'BS Computer Science',
+          field: 'Computer Science',
+          start_date: '2018-09-01',
+          end_date: '2022-05-01',
+        },
+      ],
     });
 
     await waitFor(() => {
@@ -162,7 +240,7 @@ describe('ProfilePage', () => {
     });
   });
 
-  it('shows JSON validation errors and blocks save request', async () => {
+  it('applies advanced JSON fallback patch into structured fields', async () => {
     getUserProfileMock.mockRejectedValueOnce(new api.ApiError(404, 'missing', null));
 
     renderProfilePage();
@@ -171,15 +249,56 @@ describe('ProfilePage', () => {
       expect(screen.getByText(/no profile saved yet/i)).toBeInTheDocument();
     });
 
-    fireEvent.change(screen.getByLabelText('Full Name (required)'), { target: { value: 'Casey Dev' } });
-    fireEvent.change(screen.getByLabelText('Experiences JSON (array of objects)'), { target: { value: '{' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Profile' }));
+    fireEvent.click(screen.getByText('Advanced: Raw JSON Fallback'));
+    fireEvent.change(screen.getByLabelText('Profile JSON'), {
+      target: {
+        value: JSON.stringify({
+          full_name: 'Casey Dev',
+          experiences: [{ company: 'PatchCo', title: 'Engineer' }],
+        }),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply JSON to Form' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Experiences must be valid JSON array text.')).toBeInTheDocument();
+      expect((screen.getByDisplayValue('Casey Dev') as HTMLInputElement).value).toBe('Casey Dev');
+    });
+    expect((screen.getByLabelText('Company 1') as HTMLInputElement).value).toBe('PatchCo');
+  });
+
+  it('uploads a resume and maps parsed profile values into the form', async () => {
+    getUserProfileMock.mockRejectedValueOnce(new api.ApiError(404, 'missing', null));
+    uploadResumeToProfileMock.mockResolvedValueOnce({
+      profile: {
+        id: 'primary',
+        full_name: 'Upload Dev',
+        headline: 'Parsed Headline',
+        summary: 'Parsed summary.',
+        skills: ['Go', 'Kubernetes'],
+        experiences: [{ company: 'ParseCo', title: 'Engineer', start_date: '2021-01-01', end_date: null }],
+        projects: [],
+        education: [],
+      },
+      warnings: ['date normalization incomplete'],
     });
 
-    expect(upsertUserProfileMock).not.toHaveBeenCalled();
+    renderProfilePage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/no profile saved yet/i)).toBeInTheDocument();
+    });
+
+    const file = new File(['resume-data'], 'resume.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Resume file upload'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Parse Resume to Form' }));
+
+    await waitFor(() => {
+      expect(uploadResumeToProfileMock).toHaveBeenCalledWith(file);
+    });
+
+    expect((screen.getByDisplayValue('Upload Dev') as HTMLInputElement).value).toBe('Upload Dev');
+    expect((screen.getByLabelText('Company 1') as HTMLInputElement).value).toBe('ParseCo');
+    expect(screen.getByText(/date normalization incomplete/i)).toBeInTheDocument();
   });
 
   it('shows save error when profile write fails', async () => {
