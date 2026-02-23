@@ -35,9 +35,10 @@ function runExtractMessage(): Promise<ExtractResponse> {
   if (!listener) {
     throw new Error('Extractor listener was not initialized.');
   }
+  const activeListener = listener;
 
   return new Promise((resolve) => {
-    const handledAsAsync = listener({ type: 'EXTRACT_JOB' }, {}, (response) => resolve(response));
+    const handledAsAsync = activeListener({ type: 'EXTRACT_JOB' }, {}, (response) => resolve(response));
     if (handledAsAsync !== true) {
       resolve({ ok: false, error: 'Extractor listener did not return async response handle.' });
     }
