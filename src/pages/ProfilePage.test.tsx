@@ -9,11 +9,13 @@ vi.mock('../lib/api', async () => {
   const actual = await vi.importActual<typeof import('../lib/api')>('../lib/api');
   return {
     ...actual,
+    getApplications: vi.fn(),
     getUserProfile: vi.fn(),
     upsertUserProfile: vi.fn(),
   };
 });
 
+const getApplicationsMock = vi.mocked(api.getApplications);
 const getUserProfileMock = vi.mocked(api.getUserProfile);
 const upsertUserProfileMock = vi.mocked(api.upsertUserProfile);
 
@@ -44,6 +46,24 @@ describe('ProfilePage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    getApplicationsMock.mockResolvedValue({
+      items: [
+        {
+          id: 'app-1',
+          company: 'Acme',
+          role_title: 'Engineer',
+          job_url: 'https://example.com/jobs/1',
+          job_source: 'linkedin',
+          location: null,
+          status: 'captured',
+          notes: '',
+          fit_score: null,
+          created_at: '2026-02-23T12:00:00Z',
+          updated_at: '2026-02-23T12:00:00Z',
+        },
+      ],
+      total: 1,
+    });
     getUserProfileMock.mockResolvedValue(savedProfile);
     upsertUserProfileMock.mockResolvedValue(savedProfile);
   });
@@ -55,6 +75,8 @@ describe('ProfilePage', () => {
       expect(screen.getByDisplayValue('Taylor Dev')).toBeInTheDocument();
     });
 
+    expect(screen.getByText('Reachable')).toBeInTheDocument();
+    expect(screen.getByText('Ready')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Platform Engineer')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Builds reliable APIs.')).toBeInTheDocument();
     expect((screen.getByLabelText('Skills (newline or comma separated)') as HTMLTextAreaElement).value).toBe(
@@ -80,6 +102,17 @@ describe('ProfilePage', () => {
     await waitFor(() => {
       expect(screen.getByText('backend unavailable')).toBeInTheDocument();
     });
+  });
+
+  it('shows diagnostics failure state when applications signal cannot be read', async () => {
+    getApplicationsMock.mockRejectedValueOnce(new Error('applications unavailable'));
+
+    renderProfilePage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Unavailable')).toBeInTheDocument();
+    });
+    expect(screen.getByText('applications unavailable')).toBeInTheDocument();
   });
 
   it('parses JSON text fields and saves profile payload', async () => {

@@ -1,5 +1,6 @@
 import { ChangeEvent, FormEvent, useEffect, useState } from 'react';
 import { AsyncBlock } from '../components/AsyncBlock';
+import { DiagnosticsPanel } from '../components/DiagnosticsPanel';
 import { Layout } from '../components/Layout';
 import { ApiError, getUserProfile, upsertUserProfile } from '../lib/api';
 import { UserProfile } from '../types';
@@ -68,6 +69,7 @@ export function ProfilePage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [profileSignal, setProfileSignal] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [form, setForm] = useState<ProfileFormState>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [selectedResumeName, setSelectedResumeName] = useState<string | null>(null);
@@ -79,14 +81,17 @@ export function ProfilePage() {
       .then((profile) => {
         if (!active) return;
         setForm(toFormState(profile));
+        setProfileSignal('ready');
       })
       .catch((err: unknown) => {
         if (!active) return;
         if (err instanceof ApiError && err.status === 404) {
           setNotice('No profile saved yet. Fill this form and click Save Profile.');
+          setProfileSignal('missing');
           return;
         }
         setLoadError(err instanceof Error ? err.message : 'Unable to load profile.');
+        setProfileSignal('error');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -125,6 +130,7 @@ export function ProfilePage() {
 
       setForm(toFormState(profile));
       setNotice('Profile saved. Resume generation can now use this data.');
+      setProfileSignal('ready');
     } catch (err: unknown) {
       setSubmitError(err instanceof Error ? err.message : 'Unable to save profile.');
     } finally {
@@ -147,6 +153,7 @@ export function ProfilePage() {
       title="Profile Builder"
       subtitle="Store your resume source data: identity, summary, skills, and structured history."
     >
+      <DiagnosticsPanel profileSignal={profileSignal} />
       <AsyncBlock loading={loading} error={loadError} loadingLabel="Loading profile...">
         <section className="panel">
           <h2>Candidate Profile</h2>
