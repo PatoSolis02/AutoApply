@@ -9,6 +9,7 @@
 5.  No scraping at scale.
 6.  All generated content must map to profile data.
 7.  User must approve every resume before use.
+8.  LLM runtime failures must fall back to deterministic behavior.
 
 ------------------------------------------------------------------------
 
@@ -18,3 +19,4 @@
 -   Explicit approval gates
 -   Audit trail for every resume version
 -   Clear separation between capture and submission
+-   Deterministic fallback when LLM is unavailable
