@@ -75,3 +75,19 @@ jobs:
 
       - name: Backend API tests
         run: PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_*.py'
+
+  workflow-smoke:
+    name: Workflow Smoke (Capture -> Generate -> Review -> Approve -> Audit)
+    needs: guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run deterministic workflow smoke scenarios
+        run: PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_workflow_smoke_api.py'
