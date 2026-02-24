@@ -78,7 +78,7 @@ describe('CapturePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Capture Application' }));
 
     await waitFor(() => {
-      expect(screen.getByText('invalid request payload')).toBeInTheDocument();
+      expect(screen.getByText(/missing or invalid/i)).toBeInTheDocument();
     });
   });
 });

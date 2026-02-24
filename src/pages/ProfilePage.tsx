@@ -327,6 +327,7 @@ export function ProfilePage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [advancedJsonDraft, setAdvancedJsonDraft] = useState('');
   const [advancedJsonError, setAdvancedJsonError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -354,7 +355,7 @@ export function ProfilePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshTick]);
 
   const canonicalJson = useMemo(() => JSON.stringify(toProfilePayload(form), null, 2), [form]);
 
@@ -494,10 +495,21 @@ export function ProfilePage() {
   return (
     <Layout
       title="Profile Builder"
-      subtitle="Store your resume source data: identity, summary, skills, and structured history."
+      subtitle="Maintain high-quality source data so generation, claims mapping, and approval flow stay reliable."
     >
       <DiagnosticsPanel profileSignal={profileSignal} />
-      <AsyncBlock loading={loading} error={loadError} loadingLabel="Loading profile...">
+      <AsyncBlock
+        loading={loading}
+        error={loadError}
+        loadingLabel="Loading profile..."
+        errorTitle="Profile data could not be loaded."
+        recoveryHint="Retry after checking backend connectivity. Your unsaved local edits will remain in this form session."
+        onRetry={() => {
+          setLoadError(null);
+          setLoading(true);
+          setRefreshTick((value) => value + 1);
+        }}
+      >
         <section className="panel">
           <h2>Resume Upload</h2>
           <p className="muted">
@@ -518,6 +530,9 @@ export function ProfilePage() {
           <p className="muted">
             Structured editing is the primary path for profile quality and reviewability. <code>full_name</code> is required.
           </p>
+          <div className="guidance-list">
+            <p className="tiny muted">Tip: Save after each major section so generation errors are easier to isolate and recover.</p>
+          </div>
 
           <form className="form-grid" onSubmit={handleSave}>
             <div className="section-stack">

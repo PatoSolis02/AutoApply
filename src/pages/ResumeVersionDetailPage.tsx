@@ -20,6 +20,7 @@ export function ResumeVersionDetailPage() {
   const [approvalNotice, setApprovalNotice] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [version, setVersion] = useState<ResumeVersionDetail | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     if (!resumeVersionId) {
@@ -46,7 +47,7 @@ export function ResumeVersionDetailPage() {
     return () => {
       active = false;
     };
-  }, [resumeVersionId]);
+  }, [resumeVersionId, refreshTick]);
 
   async function handleApprove() {
     if (!resumeVersionId) return;
@@ -59,7 +60,11 @@ export function ResumeVersionDetailPage() {
       setApprovalNotice('Resume version approved. Application can now be marked ready to apply.');
     } catch (err) {
       if (err instanceof ApiError) {
-        setApprovalNotice(err.status === 409 || err.status === 422 ? errorMessageForStatus(err.status) : err.message);
+        setApprovalNotice(
+          err.status === 409 || err.status === 422
+            ? `${errorMessageForStatus(err.status)} Resolve blockers and retry approval.`
+            : err.message,
+        );
       } else {
         setApprovalNotice('Unexpected error while approving this resume.');
       }
@@ -69,14 +74,25 @@ export function ResumeVersionDetailPage() {
   }
 
   return (
-    <Layout title="Resume Version Detail" subtitle="Review change log, claim mappings, and explicit approval state.">
+    <Layout title="Resume Review" subtitle="Review claim support, verify changes, and approve only when evidence is complete.">
       <p>
         <Link className="ghost-link" to={`/applications/${applicationId}`}>
           Back to application detail
         </Link>
       </p>
 
-      <AsyncBlock loading={loading} error={error} loadingLabel="Loading resume version detail...">
+      <AsyncBlock
+        loading={loading}
+        error={error}
+        loadingLabel="Loading resume version detail..."
+        errorTitle="Resume version detail is unavailable."
+        recoveryHint="Retry after confirming the backend API and this resume version ID are still valid."
+        onRetry={() => {
+          setError(null);
+          setLoading(true);
+          setRefreshTick((value) => value + 1);
+        }}
+      >
         {version ? (
           <>
             <section className="panel">
@@ -92,7 +108,7 @@ export function ResumeVersionDetailPage() {
                 </span>
               </p>
               <button type="button" onClick={handleApprove} disabled={approving || version.approval.approved}>
-                {version.approval.approved ? 'Approved' : approving ? 'Approving...' : 'Approve Resume Version'}
+                {version.approval.approved ? 'Approved' : approving ? 'Approving...' : 'Approve This Version'}
               </button>
               {approvalNotice ? <p className={approvalNotice.includes('approved') ? 'notice' : 'error'}>{approvalNotice}</p> : null}
             </section>
@@ -138,6 +154,11 @@ export function ResumeVersionDetailPage() {
                 supported={version.claims_map.filter((claim) => claim.verification_status === 'supported').length} | rejected=
                 {version.claims_map.filter((claim) => claim.verification_status === 'rejected').length}
               </p>
+              {version.claims_map.some((claim) => claim.verification_status === 'rejected') ? (
+                <p className="tiny error">
+                  Rejected claims must be resolved before approval can succeed. Return to application workspace to regenerate if needed.
+                </p>
+              ) : null}
               {version.claims_map.length ? (
                 <div className="claims-grid">
                   {sortClaimsBySeverity(version.claims_map).map((claim) => (

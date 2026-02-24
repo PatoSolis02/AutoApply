@@ -73,6 +73,11 @@ ul {
   flex-wrap: wrap;
 }
 
+.hero-hint {
+  margin-top: 0.55rem;
+  max-width: 48ch;
+}
+
 .eyebrow {
   color: var(--steel);
   text-transform: uppercase;
@@ -205,6 +210,11 @@ button:disabled {
   font-weight: 600;
 }
 
+.async-error {
+  display: grid;
+  gap: 0.55rem;
+}
+
 .timeline {
   display: grid;
   gap: 0.7rem;
@@ -263,6 +273,41 @@ button:disabled {
   color: var(--ink);
 }
 
+.ghost-link-active {
+  border-color: #f2b899;
+  background: #fff1e9;
+  color: #8b3e1c;
+}
+
+.flow-strip {
+  border: 1px solid #d4dfeb;
+  border-radius: 14px;
+  background: #f9fcff;
+  padding: 0.7rem 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.flow-step {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--steel);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.flow-index {
+  border: 1px solid #f3cdb8;
+  background: #fff4ed;
+  color: #8b3e1c;
+  border-radius: 999px;
+  min-width: 1.3rem;
+  text-align: center;
+  font-weight: 700;
+}
+
 .form-grid {
   display: grid;
   gap: 0.8rem;
@@ -311,6 +356,14 @@ button:disabled {
   margin-bottom: 0.55rem;
 }
 
+.guidance-list {
+  border: 1px dashed #ccdae9;
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+  background: #fbfdff;
+  margin-bottom: 0.8rem;
+}
+
 .form-grid label {
   display: grid;
   gap: 0.35rem;
@@ -346,6 +399,10 @@ button:disabled {
   .hero {
     display: grid;
     gap: 0.8rem;
+  }
+
+  .hero-hint {
+    max-width: none;
   }
 
   .timeline-meta {
