@@ -19,22 +19,39 @@ Owner: Integration/Product thread
   - Add fixture corpus of tricky PDFs/DOCX.
   - Track parse quality metrics (field-level precision/recall proxy).
   - Reduce manual correction rate in profile form.
+  - Improve extraction accuracy for personal details, experience/jobs, and skills.
 
-2. LinkedIn capture reliability hardening
+2. Human-friendly UI and navigation
+- Problem: current UI works functionally but is not yet optimized for intuitive end-user flow.
+- Exit criteria:
+  - Streamline primary paths (Profile, Capture, Review, Approve) with clearer navigation labels.
+  - Reduce clicks to complete the core workflow.
+  - Improve form readability and validation guidance for non-technical users.
+
+3. LinkedIn capture reliability hardening
 - Problem: capture intermittently fails depending on LinkedIn page mode/panel state.
 - Exit criteria:
   - Expand DOM fallbacks for list/detail variants.
   - Add deterministic extractor fixtures for known layouts.
   - Fewer "missing company/description" capture failures in manual QA.
 
-3. End-to-end acceptance tests (real workflow)
+4. LLM integration for extraction and generation
+- Problem: deterministic heuristics alone are not enough for robust resume understanding and high-quality tailoring.
+- Exit criteria:
+  - Add configurable LLM provider integration for:
+    - resume parsing assist (skills, experience, personal info normalization)
+    - resume generation/tailoring from job content + user profile
+  - Add prompt/version contract docs and deterministic fallback when LLM is unavailable.
+  - Add redaction/safety guardrails for sensitive data handling.
+
+5. End-to-end acceptance tests (real workflow)
 - Problem: current coverage is strong but mostly unit/integration; browser-level regressions can slip.
 - Exit criteria:
   - Add E2E smoke suite for capture -> generate -> approve -> audit export.
   - Include one profile upload flow in the same suite.
   - Add CI gate for this suite (can be nightly if runtime is long).
 
-4. Runtime and API error observability
+6. Runtime and API error observability
 - Problem: troubleshooting depends on manual local repro.
 - Exit criteria:
   - Structured API error logging with correlation IDs.
@@ -53,11 +70,11 @@ Owner: Integration/Product thread
 1. Thread A: Ingestion and capture reliability
 - Backend parser quality + extension extraction robustness.
 
-2. Thread B: Frontend profile/workflow UX
-- Correction UX for parsed data, better error guidance, workflow polish.
+2. Thread B: Frontend UX and navigation
+- Human-friendly navigation, profile correction UX, clearer workflow guidance.
 
-3. Thread C: QA and observability
-- E2E tests, diagnostics, failure-mode documentation, CI guardrails.
+3. Thread C: LLM + QA + observability
+- LLM provider wiring/contracts, E2E tests, diagnostics, failure-mode documentation.
 
 Integration thread responsibilities:
 - Merge and resolve cross-thread contract conflicts.
