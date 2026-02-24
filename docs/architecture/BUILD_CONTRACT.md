@@ -28,6 +28,20 @@ This document locks the architecture and integration contracts so parallel imple
 
 No module is allowed to bypass `audit` when creating a `ResumeVersion`.
 
+## LLM Foundation Contract (Additive)
+
+This phase adds configuration and runtime abstraction only.
+Current parser and deterministic tailoring/generation flows remain canonical behavior.
+
+Baseline rules:
+
+1. LLM runtime is disabled by default.
+2. If LLM runtime is disabled, unconfigured, or provider calls fail, deterministic behavior must run.
+3. Compliance and approval gates remain mandatory regardless of generation path.
+
+Prompt and provider version contract details are specified in:
+- `docs/architecture/LLM_FOUNDATION_CONTRACT.md`
+
 ## Canonical Data Contracts
 
 ### Application
