@@ -35,11 +35,13 @@ export function ApplicationListPage() {
   return (
     <Layout
       title="Application Tracker"
-      subtitle="Track opportunities, inspect resume history, and complete approval-gated workflow transitions."
+      subtitle="Open an application workspace, generate and approve resume versions, then move status with confidence."
     >
       <section className="panel">
         <div className="actions-row">
-          <p className="muted">Start by capturing a job posting, then generate and review resume versions.</p>
+          <p className="muted">
+            Start with capture, then use each application detail page for generation, approval checks, and lifecycle updates.
+          </p>
           <Link className="ghost-link" to="/capture">
             Capture New Job
           </Link>
@@ -47,7 +49,7 @@ export function ApplicationListPage() {
       </section>
       <AsyncBlock loading={loading} error={error} loadingLabel="Loading applications...">
         {applications.length === 0 ? (
-          <p className="panel muted">No captured applications yet. Use Capture New Job to begin.</p>
+          <p className="panel muted">No captured applications yet. Capture a posting to create your first workflow workspace.</p>
         ) : (
           <section className="grid">
             {applications.map((application) => (

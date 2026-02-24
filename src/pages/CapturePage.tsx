@@ -59,12 +59,18 @@ export function CapturePage() {
 
   return (
     <Layout
-      title="Capture Job"
-      subtitle="Create an application from a posting so tailoring and compliance workflow can begin."
+      title="Capture Job Posting"
+      subtitle="Paste the job details once to create an application workspace and start resume review."
     >
       <section className="panel">
-        <h2>LinkedIn Capture Payload</h2>
-        <p className="muted">This mirrors the `/api/v1/jobs/capture` contract used by extension capture.</p>
+        <h2>Manual Capture Form</h2>
+        <p className="muted">Use this when you want to recover quickly without relying on browser extension capture.</p>
+        <div className="guidance-list">
+          <p className="tiny muted">
+            1. Add role, company, posting URL, and description. 2. Submit to create the application record. 3. Continue in
+            Application Detail to generate a resume version.
+          </p>
+        </div>
         <form className="form-grid" onSubmit={handleSubmit}>
           <label>
             <span>Role Title</span>
