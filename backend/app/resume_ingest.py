@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
@@ -27,10 +28,21 @@ _SECTION_HEADERS = {
 }
 _SUPPORTED_FILE_TYPES = {"pdf", "docx"}
 _DATE_RANGE_PATTERN = re.compile(
-    r"(?P<start>(?:[A-Za-z]{3,9}\s+\d{4}|\d{4}))\s*[-]\s*(?P<end>(?:present|current|now|[A-Za-z]{3,9}\s+\d{4}|\d{4}))",
+    r"(?P<start>(?:[A-Za-z]{3,9}\s+\d{4}|\d{4}))\s*[-\u2013\u2014]\s*(?P<end>(?:present|current|now|[A-Za-z]{3,9}\s+\d{4}|\d{4}))",
     flags=re.IGNORECASE,
 )
 _BULLET_PATTERN = re.compile(r"^[-*]\s+")
+_PDF_BT_BLOCK_PATTERN = re.compile(r"BT(.*?)ET", flags=re.DOTALL)
+_PDF_TEXT_SHOW_PATTERN = re.compile(
+    r"(?P<literal>\((?:\\.|[^\\)])*\))\s*Tj|"
+    r"(?P<hex><[0-9A-Fa-f\s]+>)\s*Tj|"
+    r"\[(?P<array>.*?)\]\s*TJ",
+    flags=re.DOTALL,
+)
+_PDF_ARRAY_TOKEN_PATTERN = re.compile(
+    r"\((?P<literal>(?:\\.|[^\\)])*)\)|<(?P<hex>[0-9A-Fa-f\s]+)>",
+    flags=re.DOTALL,
+)
 _MONTH_TO_NUM = {
     "jan": "01",
     "feb": "02",
@@ -140,23 +152,23 @@ def _extract_pdf_text(payload: bytes) -> str:
     if not payload.startswith(b"%PDF"):
         raise ResumeParseError("invalid pdf payload")
 
-    decoded = payload.decode("latin-1", errors="ignore")
+    stream_texts = _extract_pdf_stream_texts(payload)
+    to_unicode_map = _build_tounicode_map(stream_texts)
+
     chunks: list[str] = []
-
-    for match in re.finditer(r"\((.*?)\)\s*Tj", decoded, flags=re.DOTALL):
-        text = _decode_pdf_literal(match.group(1))
-        if text.strip():
-            chunks.append(text.strip())
-
-    for match in re.finditer(r"\[(.*?)\]\s*TJ", decoded, flags=re.DOTALL):
-        pieces = re.findall(r"\((.*?)\)", match.group(1), flags=re.DOTALL)
-        combined = "".join(_decode_pdf_literal(piece) for piece in pieces).strip()
-        if combined:
-            chunks.append(combined)
+    for source in stream_texts:
+        if "BT" not in source:
+            continue
+        chunks.extend(_extract_pdf_chunks_from_source(source, to_unicode_map))
 
     if not chunks:
+        decoded = payload.decode("latin-1", errors="ignore")
+        chunks.extend(_extract_pdf_chunks_from_source(decoded, to_unicode_map))
+
+    normalized_chunks = [chunk.strip() for chunk in chunks if chunk and chunk.strip()]
+    if not normalized_chunks:
         raise ResumeParseError("unable to extract text from pdf")
-    return "\n".join(chunks)
+    return "\n".join(normalized_chunks)
 
 
 def _decode_pdf_literal(value: str) -> str:
@@ -190,6 +202,249 @@ def _decode_pdf_literal(value: str) -> str:
 
     if octal_buf:
         out.append(chr(int(octal_buf, 8)))
+    return "".join(out)
+
+
+def _extract_pdf_stream_texts(payload: bytes) -> list[str]:
+    texts: list[str] = []
+    search_start = 0
+
+    while True:
+        stream_start = payload.find(b"stream", search_start)
+        if stream_start == -1:
+            break
+
+        data_start = stream_start + len(b"stream")
+        if payload[data_start : data_start + 2] == b"\r\n":
+            data_start += 2
+        elif payload[data_start : data_start + 1] in {b"\r", b"\n"}:
+            data_start += 1
+
+        stream_end = payload.find(b"endstream", data_start)
+        if stream_end == -1:
+            break
+
+        stream_payload = payload[data_start:stream_end].rstrip(b"\r\n")
+        for variant in _pdf_stream_variants(stream_payload):
+            text = variant.decode("latin-1", errors="ignore")
+            if text:
+                texts.append(text)
+
+        search_start = stream_end + len(b"endstream")
+
+    return texts
+
+
+def _pdf_stream_variants(stream_payload: bytes) -> list[bytes]:
+    variants = [stream_payload]
+
+    for wbits in (None, -15):
+        try:
+            decoded = zlib.decompress(stream_payload) if wbits is None else zlib.decompress(stream_payload, wbits)
+        except zlib.error:
+            continue
+        if decoded and decoded not in variants:
+            variants.append(decoded)
+
+    return variants
+
+
+def _build_tounicode_map(stream_texts: list[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for text in stream_texts:
+        lowered = text.lower()
+        if "begincmap" not in lowered:
+            continue
+        _parse_bfchar_blocks(text, mapping)
+        _parse_bfrange_blocks(text, mapping)
+    return mapping
+
+
+def _parse_bfchar_blocks(text: str, mapping: dict[str, str]) -> None:
+    for block in re.findall(r"\d+\s+beginbfchar(.*?)endbfchar", text, flags=re.DOTALL):
+        for src, dst in re.findall(r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>", block):
+            decoded = _decode_cmap_unicode(dst)
+            if decoded:
+                mapping[src.upper()] = decoded
+
+
+def _parse_bfrange_blocks(text: str, mapping: dict[str, str]) -> None:
+    for block in re.findall(r"\d+\s+beginbfrange(.*?)endbfrange", text, flags=re.DOTALL):
+        for src_start, src_end, dst_start in re.findall(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+            block,
+        ):
+            width = len(src_start)
+            start = int(src_start, 16)
+            end = int(src_end, 16)
+            dst = int(dst_start, 16)
+            for offset, code in enumerate(range(start, end + 1)):
+                value = dst + offset
+                if value > 0x10FFFF:
+                    continue
+                mapping[f"{code:0{width}X}"] = chr(value)
+
+        for src_start, src_end, array_body in re.findall(
+            r"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[(.*?)\]",
+            block,
+            flags=re.DOTALL,
+        ):
+            width = len(src_start)
+            start = int(src_start, 16)
+            end = int(src_end, 16)
+            destinations = re.findall(r"<([0-9A-Fa-f]+)>", array_body)
+
+            for idx, code in enumerate(range(start, end + 1)):
+                if idx >= len(destinations):
+                    break
+                decoded = _decode_cmap_unicode(destinations[idx])
+                if decoded:
+                    mapping[f"{code:0{width}X}"] = decoded
+
+
+def _decode_cmap_unicode(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) % 2 == 1:
+        value = f"0{value}"
+    raw = bytes.fromhex(value)
+    if not raw:
+        return ""
+    for encoding in ("utf-16-be", "utf-8", "latin-1"):
+        try:
+            decoded = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if decoded:
+            return decoded
+    return ""
+
+
+def _extract_pdf_chunks_from_source(source: str, to_unicode_map: dict[str, str]) -> list[str]:
+    chunks: list[str] = []
+
+    for block in _PDF_BT_BLOCK_PATTERN.findall(source):
+        chunk = _extract_pdf_chunk_from_block(block, to_unicode_map)
+        if chunk:
+            chunks.append(chunk)
+
+    if chunks:
+        return chunks
+
+    for match in _PDF_TEXT_SHOW_PATTERN.finditer(source):
+        chunk = _decode_pdf_text_show_match(match, to_unicode_map)
+        if chunk:
+            chunks.append(chunk)
+    return chunks
+
+
+def _extract_pdf_chunk_from_block(block: str, to_unicode_map: dict[str, str]) -> str:
+    parts: list[str] = []
+
+    for match in _PDF_TEXT_SHOW_PATTERN.finditer(block):
+        parts.append(_decode_pdf_text_show_match(match, to_unicode_map))
+
+    return "".join(parts).strip()
+
+
+def _decode_pdf_text_show_match(match: re.Match[str], to_unicode_map: dict[str, str]) -> str:
+    literal = match.group("literal")
+    if literal:
+        return _decode_pdf_literal(literal[1:-1]).strip()
+
+    hex_value = match.group("hex")
+    if hex_value:
+        return _decode_pdf_hex(hex_value[1:-1], to_unicode_map).strip()
+
+    array_body = match.group("array")
+    if array_body:
+        return _decode_pdf_tj_array(array_body, to_unicode_map).strip()
+
+    return ""
+
+
+def _decode_pdf_tj_array(array_body: str, to_unicode_map: dict[str, str]) -> str:
+    parts: list[str] = []
+    for token in _PDF_ARRAY_TOKEN_PATTERN.finditer(array_body):
+        literal = token.group("literal")
+        if literal is not None:
+            decoded_literal = _decode_pdf_literal(literal)
+            if decoded_literal:
+                parts.append(decoded_literal)
+            continue
+
+        hex_value = token.group("hex")
+        if hex_value:
+            decoded_hex = _decode_pdf_hex(hex_value, to_unicode_map)
+            if decoded_hex:
+                parts.append(decoded_hex)
+    return "".join(parts)
+
+
+def _decode_pdf_hex(value: str, to_unicode_map: dict[str, str]) -> str:
+    normalized = "".join(char for char in value if char in "0123456789abcdefABCDEF").upper()
+    if not normalized:
+        return ""
+    if len(normalized) % 2 == 1:
+        normalized = f"0{normalized}"
+
+    if to_unicode_map:
+        decoded = _decode_pdf_hex_with_cmap(normalized, to_unicode_map)
+        if decoded:
+            return decoded
+
+    raw = bytes.fromhex(normalized)
+    for encoding in ("utf-16-be", "utf-8", "latin-1"):
+        try:
+            decoded = raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if decoded:
+            return decoded
+    return ""
+
+
+def _decode_pdf_hex_with_cmap(value: str, to_unicode_map: dict[str, str]) -> str:
+    key_lengths = sorted({len(key) for key in to_unicode_map}, reverse=True)
+    if not key_lengths:
+        return ""
+
+    out: list[str] = []
+    cursor = 0
+    while cursor < len(value):
+        matched = False
+        for length in key_lengths:
+            candidate = value[cursor : cursor + length]
+            if len(candidate) != length:
+                continue
+            mapped = to_unicode_map.get(candidate)
+            if mapped is None:
+                continue
+            out.append(mapped)
+            cursor += length
+            matched = True
+            break
+
+        if matched:
+            continue
+
+        fallback = value[cursor : cursor + 4]
+        if len(fallback) == 4:
+            try:
+                out.append(bytes.fromhex(fallback).decode("utf-16-be"))
+                cursor += 4
+                continue
+            except UnicodeDecodeError:
+                pass
+
+        fallback = value[cursor : cursor + 2]
+        if len(fallback) == 2:
+            out.append(bytes.fromhex(fallback).decode("latin-1", errors="ignore"))
+            cursor += 2
+            continue
+
+        break
+
     return "".join(out)
 
 

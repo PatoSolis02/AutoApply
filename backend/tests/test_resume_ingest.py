@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 import zipfile
+import zlib
 
 from app.resume_ingest import (
     ResumeParseError,
@@ -55,6 +56,65 @@ def _build_pdf(lines: list[str]) -> bytes:
     escaped = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") for line in lines]
     body = "\n".join(f"({line}) Tj" for line in escaped)
     return f"%PDF-1.4\n{body}\n".encode("latin-1")
+
+
+def _build_compressed_hex_pdf(lines: list[str]) -> bytes:
+    chars: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        for char in line:
+            if char in seen:
+                continue
+            seen.add(char)
+            chars.append(char)
+
+    code_by_char = {char: idx + 1 for idx, char in enumerate(chars)}
+    max_code = len(chars)
+    cmap_entries = "\n".join(
+        f"<{code_by_char[char]:04X}> <{ord(char):04X}>"
+        for char in chars
+    )
+    cmap = (
+        "/CIDInit /ProcSet findresource begin\n"
+        "12 dict begin\n"
+        "begincmap\n"
+        "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
+        "/CMapName /Adobe-Identity-UCS def\n"
+        "/CMapType 2 def\n"
+        "1 begincodespacerange\n"
+        f"<0001> <{max_code:04X}>\n"
+        "endcodespacerange\n"
+        f"{len(chars)} beginbfchar\n"
+        f"{cmap_entries}\n"
+        "endbfchar\n"
+        "endcmap\n"
+        "CMapName currentdict /CMap defineresource pop\n"
+        "end\n"
+        "end\n"
+    ).encode("latin-1")
+
+    content_lines = []
+    for line in lines:
+        encoded_line = "".join(f"{code_by_char[char]:04X}" for char in line)
+        content_lines.append(f"BT /F1 12 Tf 72 720 Td <{encoded_line}> Tj ET")
+    content = "\n".join(content_lines).encode("latin-1")
+
+    compressed_content = zlib.compress(content)
+    compressed_cmap = zlib.compress(cmap)
+    parts = [
+        b"%PDF-1.4\n",
+        b"1 0 obj << /Length ",
+        str(len(compressed_content)).encode("ascii"),
+        b" /Filter /FlateDecode >>\nstream\n",
+        compressed_content,
+        b"\nendstream\nendobj\n",
+        b"2 0 obj << /Length ",
+        str(len(compressed_cmap)).encode("ascii"),
+        b" /Filter /FlateDecode >>\nstream\n",
+        compressed_cmap,
+        b"\nendstream\nendobj\n%%EOF\n",
+    ]
+    return b"".join(parts)
 
 
 class ResumeIngestTests(unittest.TestCase):
@@ -135,6 +195,38 @@ class ResumeIngestTests(unittest.TestCase):
         self.assertEqual(len(parsed["profile"]["experiences"]), 2)
         self.assertEqual(parsed["profile"]["experiences"][1]["company"], "App Co")
         self.assertEqual(parsed["profile"]["experiences"][1]["end_date"], "2021-01-01")
+
+    def test_parse_pdf_decodes_compressed_hex_stream_using_tounicode_map(self) -> None:
+        payload = _build_compressed_hex_pdf(
+            [
+                "Taylor Dev",
+                "Platform Engineer",
+                "SUMMARY",
+                "Builds reliable systems.",
+                "SKILLS",
+                "Python, SQL, Docker",
+                "EXPERIENCE",
+                "Senior Backend Engineer | Acme Corp | May 2024 – Aug 2024",
+                "- Built Python services.",
+                "EDUCATION",
+                "RIT | BS Software Engineering | 2020 - 2024",
+            ]
+        )
+
+        parsed = parse_resume_upload(
+            filename="resume.pdf",
+            payload=payload,
+            profile_id="primary",
+            content_type="application/pdf",
+        )
+
+        self.assertEqual(parsed["source"]["file_type"], "pdf")
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+        self.assertEqual(parsed["profile"]["headline"], "Platform Engineer")
+        self.assertEqual(parsed["profile"]["experiences"][0]["company"], "Acme Corp")
+        self.assertEqual(parsed["profile"]["experiences"][0]["start_date"], "2024-05-01")
+        self.assertEqual(parsed["profile"]["experiences"][0]["end_date"], "2024-08-01")
+        self.assertIn("Python", parsed["profile"]["experiences"][0]["skills"])
 
     def test_parse_rejects_unsupported_extension(self) -> None:
         with self.assertRaises(ResumeUnsupportedTypeError):
