@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import { ApiError, captureJob } from '../lib/api';
 
@@ -19,6 +19,26 @@ function initialFormState(): CaptureFormState {
     jobUrl: '',
     descriptionRaw: '',
   };
+}
+
+function toCaptureErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return 'Capture did not complete. Review required fields and try again.';
+  }
+
+  if (error.status === 400) {
+    return 'Capture payload is missing or invalid. Confirm role, company, job URL, and description.';
+  }
+
+  if (error.status === 422) {
+    return 'Capture was rejected by validation. Review field formatting and submit again.';
+  }
+
+  if (error.status >= 500) {
+    return 'Backend capture service is unavailable. Start or restart the API, then retry.';
+  }
+
+  return error.message;
 }
 
 export function CapturePage() {
@@ -47,11 +67,7 @@ export function CapturePage() {
       });
       navigate(`/applications/${captured.application_id}`);
     } catch (err: unknown) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError('Unable to capture this job posting right now.');
-      }
+      setError(toCaptureErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -101,9 +117,17 @@ export function CapturePage() {
             <button type="submit" disabled={submitting}>
               {submitting ? 'Capturing...' : 'Capture Application'}
             </button>
+            <Link className="ghost-link" to="/applications">
+              Back to Applications
+            </Link>
           </div>
         </form>
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <div className="guidance-list">
+            <p className="error">{error}</p>
+            <p className="tiny muted">If this keeps failing, refresh and verify the backend API is reachable before submitting again.</p>
+          </div>
+        ) : null}
       </section>
     </Layout>
   );

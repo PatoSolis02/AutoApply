@@ -210,6 +210,11 @@ button:disabled {
   font-weight: 600;
 }
 
+.async-error {
+  display: grid;
+  gap: 0.55rem;
+}
+
 .timeline {
   display: grid;
   gap: 0.7rem;

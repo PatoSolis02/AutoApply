@@ -20,7 +20,7 @@ export function Layout({ title, subtitle, children }: LayoutProps) {
     <div className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">AutoApply S4-C Workflow</p>
+          <p className="eyebrow">AutoApply Workflow</p>
           <h1>{title}</h1>
           <p>{subtitle}</p>
           <p className="tiny muted hero-hint">Workflow: capture the posting, approve a resume version, then move status forward.</p>

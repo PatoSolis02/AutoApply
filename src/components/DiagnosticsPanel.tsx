@@ -89,12 +89,12 @@ export function DiagnosticsPanel({ profileSignal }: DiagnosticsPanelProps) {
   return (
     <section className="panel diagnostics-panel" aria-label="Diagnostics">
       <div className="actions-row">
-        <h2>Diagnostics</h2>
+        <h2>Workflow Diagnostics</h2>
         <button type="button" onClick={() => setRefreshTick((value) => value + 1)} disabled={loading}>
-          {loading ? 'Refreshing...' : 'Refresh'}
+          {loading ? 'Refreshing...' : 'Refresh Snapshot'}
         </button>
       </div>
-      <p className="tiny muted">Operational backend signals from profile and application endpoints.</p>
+      <p className="tiny muted">Quick health check for backend availability and lifecycle visibility before editing profile data.</p>
 
       <div className="diagnostics-list">
         <div>

@@ -13,7 +13,7 @@ export function ResumeTimeline({ entries }: ResumeTimelineProps) {
     return (
       <section className="panel" aria-label="Resume versions">
         <h2>Resume Versions</h2>
-        <p className="muted">No resume versions exist yet for this application.</p>
+        <p className="muted">No resume versions exist yet for this application. Generate one above to start review and approval.</p>
       </section>
     );
   }
@@ -32,7 +32,7 @@ export function ResumeTimeline({ entries }: ResumeTimelineProps) {
               <span className={entry.approval.approved ? 'badge good' : 'badge pending'}>
                 {entry.approval.approved ? 'Approved' : 'Pending approval'}
               </span>
-              <Link to={`/applications/${applicationId}/resume-versions/${entry.id}`}>View detail</Link>
+              <Link to={`/applications/${applicationId}/resume-versions/${entry.id}`}>Open review</Link>
             </div>
           </article>
         ))}

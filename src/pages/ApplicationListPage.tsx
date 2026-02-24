@@ -10,6 +10,7 @@ export function ApplicationListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applications, setApplications] = useState<ApplicationSummary[]>([]);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -30,7 +31,7 @@ export function ApplicationListPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshTick]);
 
   return (
     <Layout
@@ -47,7 +48,18 @@ export function ApplicationListPage() {
           </Link>
         </div>
       </section>
-      <AsyncBlock loading={loading} error={error} loadingLabel="Loading applications...">
+      <AsyncBlock
+        loading={loading}
+        error={error}
+        loadingLabel="Loading applications..."
+        errorTitle="Application list unavailable right now."
+        recoveryHint="Confirm the backend API is running, then retry. You can still capture a new job while this reloads."
+        onRetry={() => {
+          setError(null);
+          setLoading(true);
+          setRefreshTick((value) => value + 1);
+        }}
+      >
         {applications.length === 0 ? (
           <p className="panel muted">No captured applications yet. Capture a posting to create your first workflow workspace.</p>
         ) : (

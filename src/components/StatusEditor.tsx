@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ApiError, errorMessageForStatus, patchApplicationStatus } from '../lib/api';
 import { getAllowedTargets, toStatusLabel } from '../lib/status';
 import { ApplicationDetail, ApplicationStatus } from '../types';
@@ -14,11 +14,16 @@ export function StatusEditor({ application, onStatusUpdated }: StatusEditorProps
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  useEffect(() => {
+    setTargetStatus('');
+    setFeedback(null);
+  }, [application.status]);
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!targetStatus) {
-      setFeedback('Select a target status first.');
+      setFeedback('Choose the next status before applying a transition.');
       return;
     }
 
@@ -29,7 +34,7 @@ export function StatusEditor({ application, onStatusUpdated }: StatusEditorProps
       const next = await patchApplicationStatus(application.id, targetStatus);
       onStatusUpdated(next);
       setTargetStatus('');
-      setFeedback('Status updated successfully.');
+      setFeedback(`Status updated: ${toStatusLabel(application.status)} -> ${toStatusLabel(next.status)}.`);
     } catch (error) {
       if (error instanceof ApiError) {
         setFeedback(error.status === 409 || error.status === 422 ? errorMessageForStatus(error.status) : error.message);
@@ -45,8 +50,9 @@ export function StatusEditor({ application, onStatusUpdated }: StatusEditorProps
     <section className="panel" aria-label="Status transition">
       <h2>Status Transition</h2>
       <p className="muted">Current status: {toStatusLabel(application.status)}</p>
+      <p className="tiny muted">Use this after resume review actions are complete to move the workflow forward safely.</p>
       {allowedTargets.length === 0 ? (
-        <p className="muted">This application is in a terminal state.</p>
+        <p className="muted">This application is in a terminal state and cannot transition further.</p>
       ) : (
         <form className="inline-form" onSubmit={onSubmit}>
           <select

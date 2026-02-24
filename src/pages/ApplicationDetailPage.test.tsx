@@ -134,7 +134,7 @@ describe('ApplicationDetailPage', () => {
       expect(screen.getByText(/resume version ver-1 generated/i)).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'View detail' })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Open review' })).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'View Audit Export' }));

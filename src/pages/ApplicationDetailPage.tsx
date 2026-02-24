@@ -17,7 +17,7 @@ import { ApplicationDetail, AuditExportPayload, ResumeTimelineEntry } from '../t
 
 function formatGenerateError(error: ApiError): string {
   if (error.status !== 422) {
-    return error.message;
+    return error.message || 'Unable to generate resume version right now.';
   }
 
   if (typeof error.payload === 'object' && error.payload !== null) {
@@ -25,12 +25,12 @@ function formatGenerateError(error: ApiError): string {
     if (detail && typeof detail === 'object') {
       const blocked = (detail as { blocked_reasons?: unknown }).blocked_reasons;
       if (Array.isArray(blocked) && blocked.length > 0) {
-        return `Generation blocked: ${blocked.map((item) => String(item)).join(' | ')}`;
+        return `Generation blocked by compliance checks: ${blocked.map((item) => String(item)).join(' | ')}`;
       }
     }
   }
 
-  return 'Generation blocked by compliance checks.';
+  return 'Generation blocked by compliance checks. Review profile data and unsupported claims, then try again.';
 }
 
 export function ApplicationDetailPage() {
@@ -45,6 +45,7 @@ export function ApplicationDetailPage() {
   const [auditExport, setAuditExport] = useState<AuditExportPayload | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const auditDownloadHref = useMemo(() => {
     if (!auditExport) return null;
@@ -78,7 +79,7 @@ export function ApplicationDetailPage() {
     return () => {
       active = false;
     };
-  }, [applicationId]);
+  }, [applicationId, refreshTick]);
 
   async function refreshApplicationState(targetApplicationId: string): Promise<void> {
     const [detail, versions] = await Promise.all([getApplicationDetail(targetApplicationId), getResumeTimeline(targetApplicationId)]);
@@ -132,8 +133,8 @@ export function ApplicationDetailPage() {
 
   return (
     <Layout
-      title="Application Detail"
-      subtitle="Run capture-to-ready workflow, inspect audit evidence, and manage lifecycle transitions."
+      title="Application Workspace"
+      subtitle="Generate resume versions, handle compliance feedback, and move application status step by step."
     >
       <p>
         <Link className="ghost-link" to="/applications">
@@ -141,7 +142,18 @@ export function ApplicationDetailPage() {
         </Link>
       </p>
 
-      <AsyncBlock loading={loading} error={error} loadingLabel="Loading application detail...">
+      <AsyncBlock
+        loading={loading}
+        error={error}
+        loadingLabel="Loading application detail..."
+        errorTitle="Application detail is currently unavailable."
+        recoveryHint="Retry after confirming the backend is reachable. If needed, return to the application list and reopen this record."
+        onRetry={() => {
+          setError(null);
+          setLoading(true);
+          setRefreshTick((value) => value + 1);
+        }}
+      >
         {application ? (
           <>
             <section className="panel">
@@ -161,6 +173,11 @@ export function ApplicationDetailPage() {
                     Open latest review
                   </Link>
                 ) : null}
+              </div>
+              <div className="guidance-list">
+                <p className="tiny muted">
+                  Next: Generate a version, open it for claim review + approval, then use Status Transition to move to Ready To Apply.
+                </p>
               </div>
             </section>
 
@@ -184,6 +201,7 @@ export function ApplicationDetailPage() {
                   {generating ? 'Generating...' : 'Generate Resume'}
                 </button>
               </div>
+              <p className="tiny muted">Use template IDs like `modern`. Unknown IDs may fail depending on backend templates.</p>
               {generationMessage ? (
                 <p className={generationMessage.includes('generated') ? 'notice' : 'error'}>{generationMessage}</p>
               ) : null}
