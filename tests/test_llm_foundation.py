@@ -163,6 +163,40 @@ class LlmRuntimeFallbackTests(unittest.TestCase):
         self.assertEqual(result.metadata.mode, "deterministic")
         self.assertEqual(result.metadata.reason, "provider_error")
 
+    def test_runtime_falls_back_when_transform_raises(self) -> None:
+        class _Client:
+            provider = "openai"
+
+            def complete(self, request):
+                return LlmResponse(
+                    text="not-json",
+                    provider="openai",
+                    model=request.model,
+                    prompt_version=request.prompt.version,
+                )
+
+        registry = ProviderRegistry()
+        registry.register("openai", lambda _config: _Client())
+        runtime = LlmRuntime(
+            load_llm_config(
+                {
+                    "AUTOAPPLY_LLM_ENABLED": "true",
+                    "AUTOAPPLY_LLM_PROVIDER": "openai",
+                    "AUTOAPPLY_OPENAI_API_KEY": "secret",
+                }
+            ),
+            provider_registry=registry,
+        )
+        result = runtime.run_with_fallback(
+            workflow="resume_generate",
+            messages=[PromptMessage(role="user", content="test")],
+            llm_transform=lambda _response: (_ for _ in ()).throw(ValueError("bad transform")),
+            deterministic_fn=lambda: {"source": "deterministic"},
+        )
+        self.assertEqual(result.value["source"], "deterministic")
+        self.assertEqual(result.metadata.mode, "deterministic")
+        self.assertEqual(result.metadata.reason, "provider_exception")
+
 
 if __name__ == "__main__":
     unittest.main()

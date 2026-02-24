@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import unittest
 import zipfile
 import zlib
+
+from autoapply.llm import LlmResponse, LlmRuntime, ProviderRegistry, load_llm_config
 
 from app.resume_ingest import (
     ResumeParseError,
@@ -153,6 +156,38 @@ def _build_filtered_literal_pdf(lines: list[str], *, filters: list[str], operato
         b"\nendstream\nendobj\n%%EOF\n",
     ]
     return b"".join(parts)
+
+
+class _StaticLlmClient:
+    provider = "openai"
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def complete(self, request):
+        return LlmResponse(
+            text=self._text,
+            provider=self.provider,
+            model=request.model,
+            prompt_version=request.prompt.version,
+        )
+
+
+def _build_llm_runtime_with_response(response_text: str) -> LlmRuntime:
+    registry = ProviderRegistry()
+    registry.register("openai", lambda _config: _StaticLlmClient(response_text))
+    config = load_llm_config(
+        {
+            "AUTOAPPLY_LLM_ENABLED": "true",
+            "AUTOAPPLY_LLM_PROVIDER": "openai",
+            "AUTOAPPLY_OPENAI_API_KEY": "secret",
+        }
+    )
+    return LlmRuntime(config, provider_registry=registry)
+
+
+def _build_disabled_llm_runtime() -> LlmRuntime:
+    return LlmRuntime(load_llm_config({}))
 
 
 class ResumeIngestTests(unittest.TestCase):
@@ -398,6 +433,114 @@ class ResumeIngestTests(unittest.TestCase):
         self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
         self.assertEqual(parsed["profile"]["headline"], "Platform Engineer")
         self.assertIn("Python", parsed["profile"]["skills"])
+
+    def test_parse_reports_deterministic_normalization_metadata_when_llm_disabled(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds reliable backend systems.",
+                "SKILLS",
+                "Python, SQL, AWS",
+                "EXPERIENCE",
+                "Backend Engineer | Acme Corp | Jan 2020 - Present",
+                "- Built Python APIs.",
+                "EDUCATION",
+                "RIT | BS Computer Science | Sep 2015 - May 2019",
+            ]
+        )
+
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="primary",
+            llm_runtime=_build_disabled_llm_runtime(),
+        )
+
+        self.assertEqual(parsed["normalization"]["mode"], "deterministic")
+        self.assertEqual(parsed["normalization"]["reason"], "llm_disabled")
+        self.assertFalse(parsed["normalization"]["applied"])
+        self.assertEqual(parsed["normalization"]["change_count"], 0)
+
+    def test_parse_applies_llm_normalization_when_enabled(self) -> None:
+        payload = _build_docx(
+            [
+                "Name: Taylor Dev.",
+                "Senior backend engineer",
+                "SUMMARY",
+                "Builds reliable backend systems",
+                "SKILLS",
+                "PYTHON, Sql, aws, python",
+                "EXPERIENCE",
+                "Senior backend engineer | Acme Corp | Jan 2020 - Present",
+                "- Built Python APIs for ingestion.",
+                "EDUCATION",
+                "RIT | BS Computer Science | Sep 2015 - May 2019",
+            ]
+        )
+
+        llm_response = {
+            "profile": {
+                "full_name": "Taylor Dev",
+                "headline": "Senior Backend Engineer",
+                "summary": "Builds reliable backend systems.",
+                "skills": ["Python", "SQL", "AWS"],
+                "experiences": [
+                    {
+                        "company": "Acme Corp",
+                        "title": "Senior Backend Engineer",
+                        "start_date": "2020-01-01",
+                        "end_date": None,
+                        "bullets": ["Built Python APIs for ingestion."],
+                        "skills": ["Python", "AWS"],
+                    }
+                ],
+            }
+        }
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="primary",
+            llm_runtime=_build_llm_runtime_with_response(json.dumps(llm_response)),
+        )
+
+        self.assertEqual(parsed["normalization"]["mode"], "llm")
+        self.assertEqual(parsed["normalization"]["reason"], "llm_success")
+        self.assertTrue(parsed["normalization"]["applied"])
+        self.assertGreater(parsed["normalization"]["change_count"], 0)
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+        self.assertEqual(parsed["profile"]["headline"], "Senior Backend Engineer")
+        self.assertEqual(parsed["profile"]["skills"], ["Python", "SQL", "AWS"])
+        self.assertTrue(any(change["field"] == "full_name" for change in parsed["normalization"]["changes"]))
+
+    def test_parse_falls_back_when_llm_response_is_invalid(self) -> None:
+        payload = _build_docx(
+            [
+                "Name: Taylor Dev.",
+                "Senior backend engineer",
+                "SUMMARY",
+                "Builds reliable backend systems",
+                "SKILLS",
+                "PYTHON, Sql, aws, python",
+                "EXPERIENCE",
+                "Senior backend engineer | Acme Corp | Jan 2020 - Present",
+                "- Built Python APIs for ingestion.",
+                "EDUCATION",
+                "RIT | BS Computer Science | Sep 2015 - May 2019",
+            ]
+        )
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="primary",
+            llm_runtime=_build_llm_runtime_with_response("not-json"),
+        )
+
+        self.assertEqual(parsed["normalization"]["mode"], "deterministic")
+        self.assertEqual(parsed["normalization"]["reason"], "provider_exception")
+        self.assertFalse(parsed["normalization"]["applied"])
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev.")
 
     def test_parse_rejects_unsupported_extension(self) -> None:
         with self.assertRaises(ResumeUnsupportedTypeError):

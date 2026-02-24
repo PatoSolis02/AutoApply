@@ -82,8 +82,13 @@ class LlmRuntime:
         except Exception:
             return fallback("provider_exception")
 
+        try:
+            transformed = llm_transform(response)
+        except Exception:
+            return fallback("provider_exception")
+
         return LlmExecutionResult(
-            value=llm_transform(response),
+            value=transformed,
             metadata=LlmExecutionMetadata(
                 mode="llm",
                 reason="llm_success",
