@@ -57,101 +57,71 @@ Sprint lifecycle:
 4. Run recap/retrospective and update backlog ordering.
 5. Start next sprint batch from the updated queue.
 
-## Workstreams
+## Workstream Design (Generic)
 
-### WS-A: Capture and Ingest
+For every sprint batch, define workstreams from current backlog items (do not reuse old WS scopes by default).
 
-Scope:
+Use this template per workstream:
 
-- Chrome extension data extraction (title, company, location, URL, description).
-- Backend endpoint `POST /api/v1/jobs/capture`.
-- Validation and persistence for `Application` + `JobPosting`.
+1. Workstream ID and name
+2. Goal (single primary objective)
+3. In-scope tasks (exact backlog IDs)
+4. Out-of-scope boundaries
+5. Owned files/directories
+6. Contract dependencies
+7. Deliverables
+8. Required tests/checks
+9. Handoff file path
 
-Out of scope:
+Recommended workstream types (choose only what applies for the sprint batch):
 
-- Resume generation, UI approval flow, fit scoring.
+- Quality and bug-fix lane
+- Frontend UX/navigation lane
+- Backend feature lane
+- LLM/platform lane
+- QA/observability lane
+- Cleanup/technical-debt lane
 
-Deliverables:
+## Thread Batch Planning Algorithm
 
-- Extension capture action.
-- Ingest API with tests.
-- SQLite migrations for capture tables.
+Use this algorithm each sprint to decide which parallel threads run together:
 
-### WS-B: Dashboard and Application Tracking UI
+1. Start from highest-priority ready backlog items.
+2. Group tasks by ownership boundary (files/contracts), not by equal workload.
+3. Split into separate threads only when overlap is low.
+4. Keep overlapping tasks in one thread or sequence them in a later batch.
+5. Stop adding threads when integration complexity outweighs parallel speed.
 
-Scope:
+Thread batch guardrails:
 
-- Application list/detail views.
-- Status transition UI with backend integration.
-- Resume version list/detail read views.
-- Approval action integration.
+- Usually run 3-5 threads in parallel.
+- Expand above 5 only with very clean ownership boundaries.
+- Each thread should have one primary objective.
+- Keep 20-30% of batch capacity for regressions/hotfixes.
 
-Out of scope:
+## Integration Sequence (Generic)
 
-- Resume generation algorithm internals.
+1. Merge contract and foundation changes first.
+2. Merge dependent feature lanes second.
+3. Merge UX wiring after dependent API/contracts are stable.
+4. Merge test/observability and docs updates.
+5. Run full verification on `codex/integration`.
 
-Deliverables:
+If conflicts appear:
 
-- React pages for list/detail/version timeline.
-- Status and approval actions with optimistic or confirmed update behavior.
-- Basic error states for `409` and `422`.
+1. Integration owner resolves conflicts on `codex/integration`.
+2. Preserve contract compatibility first, then feature completeness.
+3. Re-run full test suite before declaring integration complete.
 
-### WS-C: Tailoring and PDF Pipeline
+## Branching Conventions (Generic)
 
-Scope:
-
-- Tailoring engine from `UserProfile` + `JobPosting`.
-- HTML render model generation.
-- PDF generation and artifact persistence.
-- Endpoint `POST /api/v1/applications/{id}/resume-versions/generate`.
-
-Out of scope:
-
-- UI implementation details.
-
-Deliverables:
-
-- Deterministic render model output.
-- HTML and PDF files saved per contract path rules.
-- Unit tests for content selection logic.
-
-### WS-D: Audit, Claims Mapping, and Compliance Gates
-
-Scope:
-
-- `change_log` and `claims_map` generation/validation.
-- Compliance gating (`422` on unsupported claims).
-- Version immutability checks.
-- Approval gate behavior.
-
-Out of scope:
-
-- Extension and frontend page composition.
-
-Deliverables:
-
-- Claims verifier module.
-- Audit metadata persistence.
-- Compliance tests for rejection scenarios.
-
-## Integration Sequence
-
-1. Merge WS-A first.
-2. Merge WS-C and WS-D next (order can vary).
-3. Merge WS-B after APIs are stable enough for full wiring.
-4. Final integration pass in architecture-owner thread.
-
-## Branching and PR Conventions
-
-- Branch prefixes:
-  - `codex/ws-a-capture-ingest`
-  - `codex/ws-b-dashboard-tracking`
-  - `codex/ws-c-tailor-pdf`
-  - `codex/ws-d-audit-compliance`
-- Every PR must include:
-  - contract compliance checklist
-  - tests added/updated
-  - explicit non-goals not touched
+- Branch format: `codex/<topic>-<scope>`
+- One branch per thread, one worktree per branch.
+- Every thread handoff must include:
+  - commit hash
+  - tests run and outcomes
+  - open risks/assumptions
+  - explicit contract notes
 
 ## Drift Control
 
@@ -164,9 +134,8 @@ If a workstream needs contract changes:
 
 ## Definition of Done (Program-Level)
 
-1. All four workstreams merged without contract conflicts.
-2. End-to-end flow passes:
-   - capture -> application created
-   - resume generated -> compliance checked
-   - user approval recorded -> status ready_to_apply
-3. Compliance rules from `docs/architecture/SAFETY_COMPLIANCE.md` are enforced in code and tests.
+1. All selected sprint-batch workstreams merged into `codex/integration` without unresolved contract conflicts.
+2. Required tests for all selected backlog items pass on integration branch.
+3. Critical user flows impacted by the sprint batch pass smoke validation.
+4. Compliance rules from `docs/architecture/SAFETY_COMPLIANCE.md` remain enforced in code and tests.
+5. Sprint artifacts are complete (handoffs, reflections, recap, backlog re-prioritization).
