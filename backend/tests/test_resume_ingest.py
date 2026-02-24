@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import unittest
 import zipfile
@@ -117,6 +118,43 @@ def _build_compressed_hex_pdf(lines: list[str]) -> bytes:
     return b"".join(parts)
 
 
+def _build_filtered_literal_pdf(lines: list[str], *, filters: list[str], operator: str = "Tj") -> bytes:
+    escaped = [line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") for line in lines]
+    if operator == "'":
+        body = "BT\n" + "\n".join(f"({line}) '" for line in escaped) + "\nET"
+    else:
+        body = "\n".join(f"BT ({line}) {operator} ET" for line in escaped)
+    content = body.encode("latin-1")
+
+    encoded = content
+    for filter_name in reversed(filters):
+        if filter_name == "FlateDecode":
+            encoded = zlib.compress(encoded)
+        elif filter_name == "ASCII85Decode":
+            encoded = base64.a85encode(encoded, adobe=True)
+        elif filter_name == "ASCIIHexDecode":
+            encoded = encoded.hex().upper().encode("ascii") + b">"
+        else:
+            raise ValueError(f"unsupported test filter: {filter_name}")
+
+    if len(filters) == 1:
+        filter_expr = f"/Filter /{filters[0]}"
+    else:
+        filter_expr = "/Filter [" + " ".join(f"/{name}" for name in filters) + "]"
+
+    parts = [
+        b"%PDF-1.4\n",
+        b"1 0 obj << /Length ",
+        str(len(encoded)).encode("ascii"),
+        b" ",
+        filter_expr.encode("latin-1"),
+        b" >>\nstream\n",
+        encoded,
+        b"\nendstream\nendobj\n%%EOF\n",
+    ]
+    return b"".join(parts)
+
+
 class ResumeIngestTests(unittest.TestCase):
     def test_parse_docx_maps_to_canonical_profile_shape(self) -> None:
         payload = _build_docx(
@@ -227,6 +265,139 @@ class ResumeIngestTests(unittest.TestCase):
         self.assertEqual(parsed["profile"]["experiences"][0]["start_date"], "2024-05-01")
         self.assertEqual(parsed["profile"]["experiences"][0]["end_date"], "2024-08-01")
         self.assertIn("Python", parsed["profile"]["experiences"][0]["skills"])
+
+    def test_parse_docx_prefers_labeled_name_and_skips_location_headline_noise(self) -> None:
+        payload = _build_docx(
+            [
+                "Name: Jordan Example",
+                "Location: Seattle, WA",
+                "Email: jordan@example.com",
+                "Principal Platform Engineer",
+                "SUMMARY",
+                "Builds resilient backend systems.",
+                "SKILLS",
+                "Python, SQL, AWS",
+            ]
+        )
+
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="candidate-2",
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+
+        self.assertEqual(parsed["profile"]["full_name"], "Jordan Example")
+        self.assertEqual(parsed["profile"]["headline"], "Principal Platform Engineer")
+
+    def test_parse_docx_parses_experience_headings_with_dash_and_split_date_line(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds resilient data systems.",
+                "EXPERIENCE",
+                "Acme Corp - Senior Data Engineer",
+                "Jan 2020 - Present",
+                "- Built Python ingestion services.",
+                "Software Engineer, Beta Labs 2017 - 2019",
+                "- Delivered SQL analytics APIs.",
+                "EDUCATION",
+                "RIT | BS Software Engineering | 2013 - 2017",
+            ]
+        )
+
+        parsed = parse_resume_upload(filename="resume.docx", payload=payload, profile_id="primary")
+        experiences = parsed["profile"]["experiences"]
+        self.assertEqual(len(experiences), 2)
+        self.assertEqual(experiences[0]["company"], "Acme Corp")
+        self.assertEqual(experiences[0]["title"], "Senior Data Engineer")
+        self.assertEqual(experiences[0]["start_date"], "2020-01-01")
+        self.assertIsNone(experiences[0]["end_date"])
+        self.assertEqual(experiences[1]["company"], "Beta Labs")
+        self.assertEqual(experiences[1]["title"], "Software Engineer")
+        self.assertEqual(experiences[1]["start_date"], "2017-01-01")
+        self.assertEqual(experiences[1]["end_date"], "2019-01-01")
+
+    def test_parse_docx_falls_back_to_inferred_skills_without_skills_section(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Platform Engineer",
+                "SUMMARY",
+                "Builds backend tooling.",
+                "EXPERIENCE",
+                "Senior Engineer | Acme Corp | 2020 - Present",
+                "- Built Python services deployed on AWS with Docker.",
+                "PROJECTS",
+                "Analytics Portal | Internal dashboard",
+                "- Built React + TypeScript UI.",
+                "EDUCATION",
+                "RIT | BS Software Engineering | 2015 - 2019",
+            ]
+        )
+
+        parsed = parse_resume_upload(filename="resume.docx", payload=payload, profile_id="primary")
+        self.assertIn("Python", parsed["profile"]["skills"])
+        self.assertIn("AWS", parsed["profile"]["skills"])
+        self.assertIn("Docker", parsed["profile"]["skills"])
+        self.assertIn("React", parsed["profile"]["skills"])
+
+    def test_parse_pdf_decodes_ascii85_flate_stream(self) -> None:
+        payload = _build_filtered_literal_pdf(
+            [
+                "Taylor Dev",
+                "Platform Engineer",
+                "SUMMARY",
+                "Builds reliable systems.",
+                "SKILLS",
+                "Python, SQL, Docker",
+                "EXPERIENCE",
+                "Senior Backend Engineer | Acme Corp | 05/2024 - 08/2024",
+                "- Built Python services.",
+                "EDUCATION",
+                "RIT | BS Software Engineering | 2020 - 2024",
+            ],
+            filters=["ASCII85Decode", "FlateDecode"],
+            operator="Tj",
+        )
+
+        parsed = parse_resume_upload(
+            filename="resume.pdf",
+            payload=payload,
+            profile_id="primary",
+            content_type="application/pdf",
+        )
+
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+        self.assertEqual(parsed["profile"]["experiences"][0]["start_date"], "2024-05-01")
+        self.assertEqual(parsed["profile"]["experiences"][0]["end_date"], "2024-08-01")
+
+    def test_parse_pdf_supports_single_quote_text_show_operator(self) -> None:
+        payload = _build_filtered_literal_pdf(
+            [
+                "Taylor Dev",
+                "Platform Engineer",
+                "SUMMARY",
+                "Builds reliable systems.",
+                "SKILLS",
+                "Python, SQL, Docker",
+            ],
+            filters=["ASCIIHexDecode"],
+            operator="'",
+        )
+
+        parsed = parse_resume_upload(
+            filename="resume.pdf",
+            payload=payload,
+            profile_id="primary",
+            content_type="application/pdf",
+        )
+
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+        self.assertEqual(parsed["profile"]["headline"], "Platform Engineer")
+        self.assertIn("Python", parsed["profile"]["skills"])
 
     def test_parse_rejects_unsupported_extension(self) -> None:
         with self.assertRaises(ResumeUnsupportedTypeError):
