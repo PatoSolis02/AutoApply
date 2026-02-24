@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import activeListCardFixture from './fixtures/linkedin/active-list-card.html?raw';
 import jsonLdGraphFixture from './fixtures/linkedin/jsonld-graph.html?raw';
 import modernTopCardFixture from './fixtures/linkedin/modern-top-card.html?raw';
+import topCardTextCompanyMetaFixture from './fixtures/linkedin/top-card-text-company-meta-description.html?raw';
 import twoPanePanelFixture from './fixtures/linkedin/two-pane-panel.html?raw';
 
 interface ExtractResponse {
@@ -132,5 +134,41 @@ describe('LinkedIn extractor fixtures', () => {
       job_url: 'https://www.linkedin.com/jobs/view/60012/?trackingId=abc',
     });
     expect(response.data?.description_raw.toLowerCase()).toContain('about the job');
+  });
+
+  it('falls back to active list card details when right panel markup is unavailable', async () => {
+    installDom(
+      activeListCardFixture,
+      'LinkedIn',
+      'https://www.linkedin.com/jobs/search/?keywords=reliability',
+    );
+
+    const response = await runExtractMessage();
+    expect(response.ok).toBe(true);
+    expect(response.data).toMatchObject({
+      title: 'Lead Site Reliability Engineer',
+      company: 'Harbor Tech',
+      location: 'Boston, MA',
+      job_url: 'https://www.linkedin.com/jobs/view/777888/?refId=feed',
+    });
+    expect(response.data?.description_raw.toLowerCase()).toContain('incident response');
+  });
+
+  it('extracts text-only company/location from top-card primary description and uses meta description fallback', async () => {
+    installDom(
+      topCardTextCompanyMetaFixture,
+      'Principal Data Engineer | LinkedIn',
+      'https://www.linkedin.com/jobs/search/?currentJobId=889977',
+    );
+
+    const response = await runExtractMessage();
+    expect(response.ok).toBe(true);
+    expect(response.data).toMatchObject({
+      title: 'Principal Data Engineer',
+      company: 'Fabrikam Analytics',
+      location: 'New York, NY',
+      job_url: 'https://www.linkedin.com/jobs/view/889977',
+    });
+    expect(response.data?.description_raw).toContain('streaming data platform');
   });
 });
