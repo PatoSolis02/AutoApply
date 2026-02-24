@@ -28,6 +28,36 @@ Use Linear as the execution control plane; use git/worktrees as the implementati
 - One integration issue per sprint-batch
 - One retrospective issue per sprint-batch
 
+4. Feature groups (epic-like)
+- Use labels as feature-group/epic buckets for backlog organization.
+- Keep one primary feature-group label on each backlog issue.
+
+## Story Naming Standard
+
+Use outcome-focused titles without type prefixes.
+
+- Use: `End-to-end workflow smoke tests in CI`
+- Avoid: `Q-4 End-to-end workflow smoke tests in CI`
+
+Rules:
+
+1. Do not prefix issue titles with `Q-`, `B-`, `F-`, `C-`, or sprint IDs.
+2. Keep backlog reference IDs in the description (`Backlog reference: <id>`).
+3. Keep labels responsible for classification (`quality`, `Bug`, `Feature`, `cleanup`).
+
+## Story Definition Standard
+
+Every backlog issue must include these sections in description:
+
+1. `Backlog reference` and `Priority`
+2. `Why`
+3. `Scope`
+4. `Out of scope`
+5. `Exit criteria`
+6. `Definition of done`
+
+This is the minimum quality bar for thread kickoff readiness.
+
 ## Required Fields Per Thread Issue
 
 Put these in description if custom fields are unavailable:
@@ -55,6 +85,12 @@ Standard label set:
 - topic labels: `quality`, `bug`, `feature`, `cleanup`
 - technical labels: `llm`, `capture`, `ux`, `parser`, `integration`
 - cycle label: `sprint-XX`
+- feature-group labels:
+  - `fg-core-reliability`
+  - `fg-llm-intelligence`
+  - `fg-user-experience`
+  - `fg-platform-ops`
+  - `fg-advanced-product`
 
 ## Dependency Rules
 
@@ -144,6 +180,9 @@ Every two sprints:
 
 3. Record improvements as explicit backlog items in `ROADMAP_BACKLOG.md`.
 
+4. Run maintenance threads (project organizer + code refactorer) using:
+- `docs/process/MAINTENANCE_THREADS.md`
+
 ## Live Workspace Snapshot
 
 Initialized on: 2026-02-24
@@ -167,6 +206,12 @@ Implemented setup from repo docs:
 3. Label set created for this workflow:
 - `sprint-05`, `quality`, `llm`, `capture`, `ux`, `parser`, `integration`, `retrospective`, `cleanup`
 - Default Linear labels retained: `Feature`, `Bug`, `Improvement`
+- Feature-group labels added:
+  - `fg-core-reliability`
+  - `fg-llm-intelligence`
+  - `fg-user-experience`
+  - `fg-platform-ops`
+  - `fg-advanced-product`
 
 Cycle note:
 - MCP currently exposes cycle listing, but not cycle creation in this workflow.

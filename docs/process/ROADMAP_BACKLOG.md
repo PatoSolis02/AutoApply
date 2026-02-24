@@ -19,6 +19,20 @@ Owner: Integration/Product thread
 - `4` = medium, value-add after core delivery
 - `5` = low, polish or deferable work
 
+## Linear Translation Rules
+
+When creating/updating Linear issues from this backlog:
+
+1. Use these IDs (`Q-*`, `B-*`, `F-*`, `C-*`) only as references in issue description.
+2. Do not prefix Linear issue titles with backlog IDs.
+3. Use labels for type and grouping (`quality`, `Bug`, `Feature`, `cleanup`, and `fg-*` feature groups).
+4. Use the full story sections from `docs/process/LINEAR_WORKFLOW.md`:
+- `Why`
+- `Scope`
+- `Out of scope`
+- `Exit criteria`
+- `Definition of done`
+
 ## Ordered Task Queue (Execution Order)
 
 1. `Q-1` Resume parsing field accuracy (personal info, jobs/experience, skills) - Priority `1`
