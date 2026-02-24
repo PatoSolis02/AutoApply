@@ -5,6 +5,16 @@
 - Single architecture owner: this thread.
 - Parallel implementation: separate execution threads per workstream.
 - Integration authority: this thread enforces `docs/architecture/BUILD_CONTRACT.md`.
+- Use as many threads as makes sense only when work can be partitioned into non-overlapping ownership boundaries.
+- Avoid overlapping parallel work: if two scopes touch the same primary files/contracts, keep them in one thread or run sequentially.
+
+## Threading Policy (Current)
+
+1. Maximize parallelism where ownership is independent; do not force a fixed thread count.
+2. Before kickoff, create a file/path ownership map per thread.
+3. One task has one owner thread; no dual ownership.
+4. Contract changes must be proposed to integration owner before implementation in parallel threads.
+5. Integration owner merges by dependency order and is final conflict resolver.
 
 ## Workstreams
 

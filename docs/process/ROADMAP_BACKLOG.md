@@ -98,16 +98,67 @@ Owner: Integration/Product thread
 - `C-4` Low-impact refactors - Priority `5`
 - Scope: naming consistency, minor reorganizations, non-behavioral cleanup.
 
-## Recommended Parallel Split (Topic-Based)
+## Parallelization Policy (No Overlap)
 
-1. Thread A: Quality + bug fixes
-- `Q-1`, `Q-2`, `B-1`, `B-2`
+- Use as many threads as makes sense for independent ownership lanes.
+- Maximize parallelism only when scope boundaries are clear and file overlap is minimal.
+- One task should have one owner thread at a time.
+- If two tasks touch the same primary files/contracts, keep them in the same thread or sequence them.
 
-2. Thread B: UX and workflow usability
-- `Q-3` and related frontend quality adjustments
+Parallel assignment rules:
 
-3. Thread C: LLM + tests + cleanup
-- `F-1`, `F-2`, `F-3`, `Q-4`, `C-1`
+1. Assign by ownership boundary, not by equal team size.
+2. Create a file/path ownership map before kickoff.
+3. Do not run parallel threads with overlapping write scope unless integration owner explicitly approves.
+4. Route all cross-thread contract changes through integration owner first.
+5. Merge in dependency order: foundations -> features -> UX wiring -> test hardening/docs.
+
+Recommended active split for current queue (example, topic-safe):
+
+1. Thread A: deterministic parsing + PDF edge-case fixes
+- `Q-1`, `B-1`
+
+2. Thread B: capture reliability
+- `Q-2`, `B-2` (capture contract/fallback hardening)
+
+3. Thread C: UX/navigation and flow ergonomics
+- `Q-3`
+
+4. Thread D: LLM platform + generation features
+- `F-1`, `F-2`, `F-3`
+
+5. Thread E: QA, observability, and technical debt cleanup
+- `Q-4`, `C-1`, `C-2`
+
+## Sprint Structure Recommendation
+
+Use a consistent 2-week sprint with topic-based goals.
+
+1. Planning and partitioning (Day 1)
+- Pick highest-priority items from the ordered queue.
+- Partition into non-overlapping threads using file ownership map.
+- Define contract assumptions and integration order up front.
+
+2. Parallel build window (Days 2-7)
+- Threads execute independently with minimal cross-talk.
+- Mid-sprint checkpoint only for blockers or contract deltas.
+- Keep one owner per task and per primary file area.
+
+3. Integration and hardening (Days 8-9)
+- Integration owner merges by dependency order.
+- Resolve conflicts, run full backend/frontend test suites, run smoke flow.
+- Handle only P0/P1 regressions before sprint close.
+
+4. Demo and close (Day 10)
+- Demo highest-priority user-visible improvements.
+- Publish sprint log, retrospective, and thread reflections.
+- Update this backlog with new priorities, carry-overs, and risks.
+
+Capacity and guardrails:
+
+- Reserve 20-30% sprint capacity for bug fixes/regressions/hotfixes.
+- Limit each thread to one primary objective plus one secondary objective.
+- A sprint is complete only when integration branch is stable and documented.
 
 Integration thread responsibilities:
 - Merge and resolve cross-thread contract conflicts.
