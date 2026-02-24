@@ -4,7 +4,7 @@ STATUS: DONE
 
 - branch: `codex/maint-code-refactor`
 - worktree: `/Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_maint_code_refactor`
-- final commit: `91e3d08`
+- final implementation commit: `8730be5`
 
 ## Scope Delivered
 
@@ -35,6 +35,7 @@ STATUS: DONE
 1. `aba12ce` refactor(frontend): simplify API fallback and envelope helpers
 2. `8730be5` refactor(parser-api): split resume upload validation flow
 3. `91e3d08` docs(sprint-06): add maintenance refactor handoff and reflection
+4. `067fd46` docs(sprint-06): update maint refactor final commit hash
 
 ## Tests / Checks Run
 
