@@ -19,7 +19,7 @@ Each maintenance thread must use a separate branch and worktree created from `co
 ## Kickoff Message: Project Organizer Thread
 
 ```text
-Read docs/process/, ROADMAP_BACKLOG.md, and current sprint artifacts. You own the Project Organizer maintenance lane.
+Read `docs/process/README.md`, `docs/process/ROADMAP_BACKLOG.md`, and current sprint artifacts. You own the Project Organizer maintenance lane.
 
 Create/reuse branch: codex/maint-project-organizer
 Create/reuse worktree: /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_maint_project_organizer
@@ -40,7 +40,7 @@ Deliver:
 ## Kickoff Message: Code Refactorer Thread
 
 ```text
-Read docs/process/, architecture contracts, and current sprint artifacts. You own the Code Refactorer maintenance lane.
+Read `docs/process/README.md`, architecture contracts, and current sprint artifacts. You own the Code Refactorer maintenance lane.
 
 Create/reuse branch: codex/maint-code-refactor
 Create/reuse worktree: /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/autoapply_maint_code_refactor

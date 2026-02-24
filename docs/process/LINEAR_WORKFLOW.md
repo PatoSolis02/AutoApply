@@ -198,7 +198,7 @@ Every two sprints:
 
 2. Update this document with process changes.
 
-3. Record improvements as explicit backlog items in `ROADMAP_BACKLOG.md`.
+3. Record improvements as explicit backlog items in `docs/process/ROADMAP_BACKLOG.md`.
 
 4. Run maintenance threads (project organizer + code refactorer) using:
 - `docs/process/MAINTENANCE_THREADS.md`
