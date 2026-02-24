@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import re
 import zipfile
 import zlib
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+
+from autoapply.llm import LlmExecutionMetadata, LlmRuntime, PromptMessage, load_llm_config
 
 CONTRACT_VERSION = "resume_parse.v1"
 
@@ -120,6 +123,9 @@ _SKILL_KEYWORDS = [
     "Git",
     "Linux",
 ]
+_MAX_LLM_SOURCE_LINES = 200
+_MAX_LLM_SOURCE_CHARS = 12000
+_NO_UPDATE = object()
 
 
 class ResumeParseError(Exception):
@@ -144,12 +150,19 @@ def parse_resume_upload(
     payload: bytes,
     profile_id: str = "primary",
     content_type: str | None = None,
+    llm_runtime: LlmRuntime | None = None,
 ) -> dict[str, Any]:
     file_type = _detect_file_type(filename, content_type)
     text = _extract_text(file_type, payload)
     lines = _normalize_lines(text)
     profile, warnings = _map_to_profile(lines=lines, profile_id=profile_id)
-    errors = _validate_profile(profile)
+    normalized_profile, normalized_warnings, normalization = _normalize_profile_with_llm(
+        lines=lines,
+        profile=profile,
+        warnings=warnings,
+        llm_runtime=llm_runtime or LlmRuntime(load_llm_config()),
+    )
+    errors = _validate_profile(normalized_profile)
     if errors:
         raise ResumeParseValidationError(errors)
 
@@ -161,9 +174,529 @@ def parse_resume_upload(
             "file_type": file_type,
             "size_bytes": len(payload),
         },
-        "profile": profile,
-        "warnings": warnings,
+        "profile": normalized_profile,
+        "warnings": normalized_warnings,
+        "normalization": normalization,
     }
+
+
+def _normalize_profile_with_llm(
+    *,
+    lines: list[str],
+    profile: dict[str, Any],
+    warnings: list[str],
+    llm_runtime: LlmRuntime,
+) -> tuple[dict[str, Any], list[str], dict[str, Any]]:
+    baseline_profile = _clone_profile(profile)
+    baseline_warnings = [warning for warning in warnings if isinstance(warning, str) and warning.strip()]
+
+    execution = llm_runtime.run_with_fallback(
+        workflow="resume_parse",
+        messages=_build_parse_normalization_messages(lines=lines, profile=baseline_profile, warnings=baseline_warnings),
+        llm_transform=lambda response: _llm_transform_parse_profile(
+            response_text=response.text,
+            baseline_profile=baseline_profile,
+        ),
+        deterministic_fn=lambda: _normalization_result_from_profile(baseline_profile, baseline_warnings),
+    )
+    normalized_profile = execution.value["profile"]
+    normalized_warnings = execution.value["warnings"]
+    changes = _build_profile_change_trace(lines=lines, before=baseline_profile, after=normalized_profile)
+    normalization = _build_normalization_metadata(execution.metadata, changes)
+    return normalized_profile, normalized_warnings, normalization
+
+
+def _build_parse_normalization_messages(
+    *,
+    lines: list[str],
+    profile: dict[str, Any],
+    warnings: list[str],
+) -> list[PromptMessage]:
+    rendered_lines = "\n".join(f"{idx + 1}: {line}" for idx, line in enumerate(lines[:_MAX_LLM_SOURCE_LINES]))
+    if len(rendered_lines) > _MAX_LLM_SOURCE_CHARS:
+        rendered_lines = rendered_lines[:_MAX_LLM_SOURCE_CHARS]
+
+    source_profile = json.dumps(profile, ensure_ascii=True)
+    source_warnings = json.dumps(warnings, ensure_ascii=True)
+    return [
+        PromptMessage(
+            role="system",
+            content=(
+                "You normalize deterministic resume parser output into canonical profile fields. "
+                "Do not invent facts and do not add experiences/projects/education not present in the source lines. "
+                "Return JSON only."
+            ),
+        ),
+        PromptMessage(
+            role="user",
+            content=(
+                "Source resume lines:\n"
+                f"{rendered_lines}\n\n"
+                "Deterministic parser output JSON:\n"
+                f"{source_profile}\n\n"
+                "Deterministic warnings:\n"
+                f"{source_warnings}\n\n"
+                "Return exactly this shape as JSON:\n"
+                "{\"profile\": { ... }}\n"
+                "Use the same contract fields and preserve existing entry ids when present."
+            ),
+        ),
+    ]
+
+
+def _llm_transform_parse_profile(
+    *,
+    response_text: str,
+    baseline_profile: dict[str, Any],
+) -> dict[str, Any]:
+    payload = _extract_json_object(response_text)
+    candidate_profile: Any = payload.get("profile")
+    if not isinstance(candidate_profile, dict):
+        candidate_profile = payload
+    normalized_profile = _merge_profile_candidate(baseline=baseline_profile, candidate=candidate_profile)
+    errors = _validate_profile(normalized_profile)
+    if errors:
+        raise ValueError("llm normalization failed profile validation")
+    return _normalization_result_from_profile(normalized_profile)
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    content = text.strip()
+    if content.startswith("```"):
+        content = "\n".join(
+            line for line in content.splitlines() if not line.strip().startswith("```")
+        ).strip()
+    if not content:
+        raise ValueError("llm response was empty")
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("llm response did not include json object")
+        parsed = json.loads(content[start : end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("llm response json must be an object")
+    return parsed
+
+
+def _merge_profile_candidate(*, baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    merged = _clone_profile(baseline)
+    if not isinstance(candidate, dict):
+        return merged
+
+    full_name = _as_non_empty_string(candidate.get("full_name"))
+    if full_name is not None:
+        merged["full_name"] = full_name
+
+    headline = _as_nullable_string_update(candidate.get("headline"))
+    if headline is not _NO_UPDATE:
+        merged["headline"] = headline
+
+    summary = _as_nullable_string_update(candidate.get("summary"))
+    if summary is not _NO_UPDATE:
+        merged["summary"] = summary
+
+    skills = _as_string_list(candidate.get("skills"))
+    if skills is not None:
+        merged["skills"] = _dedupe_case_preserving(skills)
+
+    merged["experiences"] = _merge_experience_entries(
+        baseline_entries=_safe_dict_list(baseline.get("experiences")),
+        candidate_entries=candidate.get("experiences"),
+    )
+    merged["projects"] = _merge_project_entries(
+        baseline_entries=_safe_dict_list(baseline.get("projects")),
+        candidate_entries=candidate.get("projects"),
+    )
+    merged["education"] = _merge_education_entries(
+        baseline_entries=_safe_dict_list(baseline.get("education")),
+        candidate_entries=candidate.get("education"),
+    )
+    return merged
+
+
+def _merge_experience_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
+    if not isinstance(candidate_entries, list):
+        return [_clone_profile(entry) for entry in baseline_entries]
+
+    merged: list[dict[str, Any]] = []
+    target_count = max(len(baseline_entries), len(candidate_entries))
+    for idx in range(target_count):
+        candidate = candidate_entries[idx] if idx < len(candidate_entries) else None
+        if idx < len(baseline_entries):
+            entry = _clone_profile(baseline_entries[idx])
+            if isinstance(candidate, dict):
+                company = _as_non_empty_string(candidate.get("company"))
+                if company is not None:
+                    entry["company"] = company
+
+                title = _as_non_empty_string(candidate.get("title"))
+                if title is not None:
+                    entry["title"] = title
+
+                start_date = _as_non_empty_string(candidate.get("start_date"))
+                if start_date is not None:
+                    entry["start_date"] = start_date
+
+                end_date = _as_nullable_string_update(candidate.get("end_date"))
+                if end_date is not _NO_UPDATE:
+                    entry["end_date"] = end_date
+
+                bullets = _as_string_list(candidate.get("bullets"))
+                if bullets is not None:
+                    entry["bullets"] = bullets
+
+                skills = _as_string_list(candidate.get("skills"))
+                if skills is not None:
+                    entry["skills"] = _dedupe_case_preserving(skills)
+            merged.append(entry)
+            continue
+
+        if not isinstance(candidate, dict):
+            continue
+        company = _as_non_empty_string(candidate.get("company"))
+        title = _as_non_empty_string(candidate.get("title"))
+        if company is None or title is None:
+            continue
+
+        start_date = _as_non_empty_string(candidate.get("start_date")) or ""
+        end_date = _as_nullable_string_update(candidate.get("end_date"))
+        if end_date is _NO_UPDATE:
+            end_date = None
+        entry = _new_experience(idx + 1, company, title, start_date, end_date)
+        entry_id = _as_non_empty_string(candidate.get("id"))
+        if entry_id is not None:
+            entry["id"] = entry_id
+
+        bullets = _as_string_list(candidate.get("bullets"))
+        skills = _as_string_list(candidate.get("skills"))
+        entry["bullets"] = bullets or []
+        entry["skills"] = _dedupe_case_preserving(skills or [])
+        merged.append(entry)
+
+    return merged
+
+
+def _merge_project_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
+    if not isinstance(candidate_entries, list):
+        return [_clone_profile(entry) for entry in baseline_entries]
+
+    merged: list[dict[str, Any]] = []
+    target_count = max(len(baseline_entries), len(candidate_entries))
+    for idx in range(target_count):
+        candidate = candidate_entries[idx] if idx < len(candidate_entries) else None
+        if idx < len(baseline_entries):
+            entry = _clone_profile(baseline_entries[idx])
+            if isinstance(candidate, dict):
+                name = _as_non_empty_string(candidate.get("name"))
+                if name is not None:
+                    entry["name"] = name
+
+                description = _as_non_empty_string(candidate.get("description"))
+                if description is not None:
+                    entry["description"] = description
+
+                url = _as_nullable_string_update(candidate.get("url"))
+                if url is not _NO_UPDATE:
+                    entry["url"] = url
+
+                bullets = _as_string_list(candidate.get("bullets"))
+                if bullets is not None:
+                    entry["bullets"] = bullets
+
+                skills = _as_string_list(candidate.get("skills"))
+                if skills is not None:
+                    entry["skills"] = _dedupe_case_preserving(skills)
+            merged.append(entry)
+            continue
+
+        if not isinstance(candidate, dict):
+            continue
+        name = _as_non_empty_string(candidate.get("name"))
+        if name is None:
+            continue
+        description = _as_non_empty_string(candidate.get("description")) or ""
+        entry = _new_project(idx + 1, name, description)
+        entry_id = _as_non_empty_string(candidate.get("id"))
+        if entry_id is not None:
+            entry["id"] = entry_id
+
+        url = _as_nullable_string_update(candidate.get("url"))
+        if url is not _NO_UPDATE:
+            entry["url"] = url
+
+        bullets = _as_string_list(candidate.get("bullets"))
+        skills = _as_string_list(candidate.get("skills"))
+        entry["bullets"] = bullets or []
+        entry["skills"] = _dedupe_case_preserving(skills or [])
+        merged.append(entry)
+    return merged
+
+
+def _merge_education_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
+    if not isinstance(candidate_entries, list):
+        return [_clone_profile(entry) for entry in baseline_entries]
+
+    merged: list[dict[str, Any]] = []
+    target_count = max(len(baseline_entries), len(candidate_entries))
+    for idx in range(target_count):
+        candidate = candidate_entries[idx] if idx < len(candidate_entries) else None
+        if idx < len(baseline_entries):
+            entry = _clone_profile(baseline_entries[idx])
+            if isinstance(candidate, dict):
+                school = _as_non_empty_string(candidate.get("school"))
+                if school is not None:
+                    entry["school"] = school
+
+                degree = _as_non_empty_string(candidate.get("degree"))
+                if degree is not None:
+                    entry["degree"] = degree
+
+                field = _as_nullable_string_update(candidate.get("field"))
+                if field is not _NO_UPDATE:
+                    entry["field"] = field
+
+                start_date = _as_nullable_string_update(candidate.get("start_date"))
+                if start_date is not _NO_UPDATE:
+                    entry["start_date"] = start_date
+
+                end_date = _as_nullable_string_update(candidate.get("end_date"))
+                if end_date is not _NO_UPDATE:
+                    entry["end_date"] = end_date
+            merged.append(entry)
+            continue
+
+        if not isinstance(candidate, dict):
+            continue
+        school = _as_non_empty_string(candidate.get("school"))
+        if school is None:
+            continue
+        degree = _as_non_empty_string(candidate.get("degree")) or ""
+        entry = {
+            "id": f"edu-{idx + 1}",
+            "school": school,
+            "degree": degree,
+            "field": None,
+            "start_date": None,
+            "end_date": None,
+        }
+        entry_id = _as_non_empty_string(candidate.get("id"))
+        if entry_id is not None:
+            entry["id"] = entry_id
+
+        field = _as_nullable_string_update(candidate.get("field"))
+        if field is not _NO_UPDATE:
+            entry["field"] = field
+        start_date = _as_nullable_string_update(candidate.get("start_date"))
+        if start_date is not _NO_UPDATE:
+            entry["start_date"] = start_date
+        end_date = _as_nullable_string_update(candidate.get("end_date"))
+        if end_date is not _NO_UPDATE:
+            entry["end_date"] = end_date
+        merged.append(entry)
+    return merged
+
+
+def _as_non_empty_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _as_nullable_string_update(value: Any) -> str | None | object:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return _NO_UPDATE
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _as_string_list(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()
+        if not normalized:
+            continue
+        out.append(normalized)
+    return out
+
+
+def _safe_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        out.append(item)
+    return out
+
+
+def _normalization_result_from_profile(profile: dict[str, Any], warnings: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "profile": _clone_profile(profile),
+        "warnings": _derive_profile_warnings(profile) if warnings is None else list(warnings),
+    }
+
+
+def _derive_profile_warnings(profile: dict[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    if not profile.get("experiences"):
+        warnings.append("experience section was empty or not detected")
+    if not profile.get("skills"):
+        warnings.append("skills section was empty or not detected")
+    if not profile.get("education"):
+        warnings.append("education section was empty or not detected")
+    if not profile.get("projects"):
+        warnings.append("projects section was empty or not detected")
+    return warnings
+
+
+def _build_normalization_metadata(
+    metadata: LlmExecutionMetadata,
+    changes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "mode": metadata.mode,
+        "reason": metadata.reason,
+        "provider": metadata.provider,
+        "model": metadata.model,
+        "prompt_version": metadata.prompt_version,
+        "applied": metadata.mode == "llm" and bool(changes),
+        "change_count": len(changes),
+        "changes": changes,
+    }
+
+
+def _build_profile_change_trace(
+    *,
+    lines: list[str],
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> list[dict[str, Any]]:
+    before_flat = _flatten_profile_for_trace(before)
+    after_flat = _flatten_profile_for_trace(after)
+    changes: list[dict[str, Any]] = []
+    for field in sorted(set(before_flat) | set(after_flat)):
+        before_value = before_flat.get(field)
+        after_value = after_flat.get(field)
+        if before_value == after_value:
+            continue
+        item: dict[str, Any] = {
+            "field": field,
+            "before": before_value,
+            "after": after_value,
+        }
+        evidence = _find_trace_evidence_line(lines, before_value=before_value, after_value=after_value)
+        if evidence is not None:
+            item["evidence_line"] = evidence
+        changes.append(item)
+    return changes
+
+
+def _flatten_profile_for_trace(profile: dict[str, Any]) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    out["full_name"] = _as_trace_string(profile.get("full_name"))
+    out["headline"] = _as_trace_string(profile.get("headline"))
+    out["summary"] = _as_trace_string(profile.get("summary"))
+
+    skills = profile.get("skills")
+    if isinstance(skills, list):
+        for idx, item in enumerate(skills):
+            out[f"skills[{idx}]"] = _as_trace_string(item)
+
+    experiences = profile.get("experiences")
+    if isinstance(experiences, list):
+        for exp_idx, entry in enumerate(experiences):
+            if not isinstance(entry, dict):
+                continue
+            for key in ("company", "title", "start_date", "end_date"):
+                out[f"experiences[{exp_idx}].{key}"] = _as_trace_string(entry.get(key))
+            bullets = entry.get("bullets")
+            if isinstance(bullets, list):
+                for bullet_idx, bullet in enumerate(bullets):
+                    out[f"experiences[{exp_idx}].bullets[{bullet_idx}]"] = _as_trace_string(bullet)
+            skills_list = entry.get("skills")
+            if isinstance(skills_list, list):
+                for skill_idx, skill in enumerate(skills_list):
+                    out[f"experiences[{exp_idx}].skills[{skill_idx}]"] = _as_trace_string(skill)
+
+    projects = profile.get("projects")
+    if isinstance(projects, list):
+        for proj_idx, entry in enumerate(projects):
+            if not isinstance(entry, dict):
+                continue
+            for key in ("name", "description", "url"):
+                out[f"projects[{proj_idx}].{key}"] = _as_trace_string(entry.get(key))
+            bullets = entry.get("bullets")
+            if isinstance(bullets, list):
+                for bullet_idx, bullet in enumerate(bullets):
+                    out[f"projects[{proj_idx}].bullets[{bullet_idx}]"] = _as_trace_string(bullet)
+            skills_list = entry.get("skills")
+            if isinstance(skills_list, list):
+                for skill_idx, skill in enumerate(skills_list):
+                    out[f"projects[{proj_idx}].skills[{skill_idx}]"] = _as_trace_string(skill)
+
+    education = profile.get("education")
+    if isinstance(education, list):
+        for edu_idx, entry in enumerate(education):
+            if not isinstance(entry, dict):
+                continue
+            for key in ("school", "degree", "field", "start_date", "end_date"):
+                out[f"education[{edu_idx}].{key}"] = _as_trace_string(entry.get(key))
+
+    return out
+
+
+def _as_trace_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _find_trace_evidence_line(
+    lines: list[str],
+    *,
+    before_value: str | None,
+    after_value: str | None,
+) -> str | None:
+    candidates = [after_value, before_value]
+    lowered_lines = [line.lower() for line in lines]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        lowered_candidate = candidate.lower()
+        for idx, line in enumerate(lowered_lines):
+            if lowered_candidate in line:
+                return f"{idx + 1}: {lines[idx]}"
+    return None
+
+
+def _clone_profile(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _clone_profile(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_profile(item) for item in value]
+    return value
 
 
 def _detect_file_type(filename: str, content_type: str | None) -> str:

@@ -146,6 +146,8 @@ class ResumeUploadApiTests(unittest.TestCase):
         self.assertEqual(parsed["profile"]["id"], "candidate-123")
         self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
         self.assertEqual(parsed["profile"]["experiences"][0]["company"], "Acme Corp")
+        self.assertIn(parsed["normalization"]["mode"], {"deterministic", "llm"})
+        self.assertIn("change_count", parsed["normalization"])
 
     def test_resume_parse_upload_rejects_non_multipart_payload(self) -> None:
         status, body = self._request(
