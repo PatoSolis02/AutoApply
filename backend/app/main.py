@@ -5,13 +5,16 @@ from datetime import datetime, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy_default
 import json
+import logging
 import os
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
+import time
 from typing import Any, Optional, Union
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 from .db import CaptureDatabase, DbComplianceError, DbConflictError, DbNotFoundError
 from .ingest import build_structured_job_posting
@@ -43,6 +46,8 @@ _PROFILE_PATH = "/api/v1/profile"
 _PROFILE_RESUME_PARSE_PATH = "/api/v1/profile/resume-parse"
 _PROFILE_RESUME_PARSE_LEGACY_PATH = "/api/v1/profile/ingest"
 _HEALTH_PATH = "/health"
+_REQUEST_ID_HEADER = "X-Request-Id"
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _ALLOWED_STATUSES = {
     "captured",
     "drafting",
@@ -52,6 +57,13 @@ _ALLOWED_STATUSES = {
     "rejected",
     "offer",
 }
+_LOGGER = logging.getLogger("autoapply.api")
+if not _LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _LOGGER.addHandler(_handler)
+_LOGGER.setLevel(logging.INFO)
+_LOGGER.propagate = False
 
 
 @dataclass
@@ -61,13 +73,81 @@ class _UploadedFormFile:
     payload: bytes
 
 
+def _emit_structured_log(level: int, event: str, **fields: Any) -> None:
+    payload: dict[str, Any] = {
+        "event": event,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    payload.update({key: value for key, value in fields.items() if value is not None})
+    _LOGGER.log(level, json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str))
+
+
+def _normalize_request_id(header_value: str | None) -> tuple[str, str]:
+    candidate = (header_value or "").strip()
+    if _REQUEST_ID_PATTERN.fullmatch(candidate):
+        return candidate, "client"
+    return str(uuid4()), "generated"
+
+
+def _classify_error(status: int, body: dict[str, Any]) -> str | None:
+    if status < 400:
+        return None
+    if status == HTTPStatus.BAD_REQUEST:
+        return "bad_request"
+    if status == HTTPStatus.NOT_FOUND:
+        return "not_found"
+    if status == HTTPStatus.CONFLICT:
+        return "conflict"
+    if status == HTTPStatus.UNSUPPORTED_MEDIA_TYPE:
+        return "unsupported_media_type"
+    if status == HTTPStatus.UNPROCESSABLE_ENTITY:
+        detail = body.get("detail")
+        blocked_reasons = detail.get("blocked_reasons") if isinstance(detail, dict) else None
+        if isinstance(blocked_reasons, list):
+            return "compliance_failure"
+        if isinstance(detail, str) and ("approval gate failed" in detail or "unsupported claims" in detail):
+            return "compliance_failure"
+        return "validation_failure"
+    if status >= 500:
+        return "internal_error"
+    return "request_error"
+
+
+def _failure_reason(body: dict[str, Any]) -> str | None:
+    errors = body.get("errors")
+    if isinstance(errors, list) and len(errors) > 0 and isinstance(errors[0], dict):
+        field = errors[0].get("field")
+        message = errors[0].get("message")
+        if isinstance(field, str) and isinstance(message, str):
+            return f"{field}: {message}"
+    return None
+
+
+def _truncate_detail(detail: Any, *, max_len: int = 240) -> str | None:
+    if detail is None:
+        return None
+    if isinstance(detail, str):
+        text = detail
+    else:
+        text = json.dumps(detail, sort_keys=True, default=str)
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}...(truncated)"
+
+
 def _json_response(handler: BaseHTTPRequestHandler, status: int, body: dict[str, Any]) -> None:
     payload = json.dumps(body).encode("utf-8")
+    request_id = getattr(handler, "_request_id", None)
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json")
     handler.send_header("Content-Length", str(len(payload)))
+    if isinstance(request_id, str) and request_id:
+        handler.send_header(_REQUEST_ID_HEADER, request_id)
     handler.end_headers()
     handler.wfile.write(payload)
+    on_response_sent = getattr(handler, "_on_response_sent", None)
+    if callable(on_response_sent):
+        on_response_sent(status=status, body=body, payload_size=len(payload))
 
 
 def _build_handler(capture_db: CaptureDatabase):
@@ -80,6 +160,7 @@ def _build_handler(capture_db: CaptureDatabase):
 
     class CaptureRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            self._begin_request("GET")
             parsed = urlparse(self.path)
 
             if parsed.path == _HEALTH_PATH:
@@ -115,6 +196,7 @@ def _build_handler(capture_db: CaptureDatabase):
             _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
 
         def do_PATCH(self) -> None:  # noqa: N802
+            self._begin_request("PATCH")
             parsed = urlparse(self.path)
             match = _APPLICATION_STATUS_PATTERN.match(parsed.path)
             if match is None:
@@ -123,6 +205,7 @@ def _build_handler(capture_db: CaptureDatabase):
             self._handle_update_application_status(match.group(1))
 
         def do_PUT(self) -> None:  # noqa: N802
+            self._begin_request("PUT")
             parsed = urlparse(self.path)
             if parsed.path == _PROFILE_PATH:
                 self._handle_upsert_profile()
@@ -130,6 +213,7 @@ def _build_handler(capture_db: CaptureDatabase):
             _json_response(self, HTTPStatus.NOT_FOUND, {"detail": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            self._begin_request("POST")
             parsed = urlparse(self.path)
 
             if parsed.path == "/api/v1/jobs/capture":
@@ -175,6 +259,13 @@ def _build_handler(capture_db: CaptureDatabase):
                 description_raw=capture.description_raw,
                 captured_at=capture.captured_at,
                 structured_json=structured,
+            )
+            _emit_structured_log(
+                logging.INFO,
+                "capture.created",
+                request_id=self._request_id,
+                application_id=application_id,
+                job_posting_id=job_posting_id,
             )
 
             _json_response(
@@ -302,6 +393,13 @@ def _build_handler(capture_db: CaptureDatabase):
                 return
 
             latest = capture_db.get_latest_resume_version(application_id)
+            _emit_structured_log(
+                logging.INFO,
+                "application.status.updated",
+                request_id=self._request_id,
+                application_id=application_id,
+                status=str(updated.get("status")),
+            )
             _json_response(
                 self,
                 HTTPStatus.OK,
@@ -367,6 +465,15 @@ def _build_handler(capture_db: CaptureDatabase):
             except ApiError as err:
                 _json_response(self, err.status_code, {"detail": err.detail})
                 return
+            _emit_structured_log(
+                logging.INFO,
+                "resume.version.generated",
+                request_id=self._request_id,
+                application_id=application_id,
+                resume_version_id=response_payload.get("resume_version_id"),
+                warnings_count=len(response_payload.get("warnings", [])),
+                blocked_reasons_count=len(response_payload.get("blocked_reasons", [])),
+            )
 
             _json_response(self, HTTPStatus.CREATED, response_payload)
 
@@ -399,6 +506,14 @@ def _build_handler(capture_db: CaptureDatabase):
                     _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
                     return
 
+            _emit_structured_log(
+                logging.INFO,
+                "resume.version.approved",
+                request_id=self._request_id,
+                application_id=application_id,
+                resume_version_id=resume_version_id,
+                approval_recorded=bool(approved.get("approval", {}).get("approved", False)),
+            )
             _json_response(self, HTTPStatus.OK, approved)
 
         def _handle_parse_resume_upload(self) -> None:
@@ -485,7 +600,67 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.UNPROCESSABLE_ENTITY, {"detail": str(err)})
                 return
 
+            _emit_structured_log(
+                logging.INFO,
+                "resume.parse.succeeded",
+                request_id=self._request_id,
+                profile_id=parsed.get("profile", {}).get("id"),
+                file_type=parsed.get("source", {}).get("file_type"),
+                parser_name=parsed.get("source", {}).get("parser"),
+            )
             _json_response(self, HTTPStatus.OK, parsed)
+
+        def _begin_request(self, method: str) -> None:
+            parsed = urlparse(self.path)
+            request_id, request_id_source = _normalize_request_id(self.headers.get(_REQUEST_ID_HEADER))
+            self._request_id = request_id
+            self._request_method = method
+            self._request_path = parsed.path
+            self._request_started_at = time.perf_counter()
+            self._response_logged = False
+            _emit_structured_log(
+                logging.INFO,
+                "request.started",
+                request_id=request_id,
+                request_id_source=request_id_source,
+                method=method,
+                path=parsed.path,
+                query=(parsed.query or None),
+                remote_ip=self.client_address[0] if self.client_address else None,
+                content_type=self.headers.get("Content-Type"),
+                content_length=self.headers.get("Content-Length"),
+            )
+
+        def _on_response_sent(self, *, status: int, body: dict[str, Any], payload_size: int) -> None:
+            if bool(getattr(self, "_response_logged", False)):
+                return
+            self._response_logged = True
+            started = getattr(self, "_request_started_at", None)
+            duration_ms: float | None = None
+            if isinstance(started, (int, float)):
+                duration_ms = round((time.perf_counter() - float(started)) * 1000, 3)
+
+            error_class = _classify_error(status, body)
+            event = "request.completed" if error_class is None else "request.failed"
+            level = logging.INFO
+            if status >= 500:
+                level = logging.ERROR
+            elif status >= 400:
+                level = logging.WARNING
+
+            _emit_structured_log(
+                level,
+                event,
+                request_id=getattr(self, "_request_id", None),
+                method=getattr(self, "_request_method", self.command),
+                path=getattr(self, "_request_path", urlparse(self.path).path),
+                status_code=status,
+                duration_ms=duration_ms,
+                response_bytes=payload_size,
+                error_class=error_class,
+                failure_reason=_failure_reason(body),
+                detail=_truncate_detail(body.get("detail")),
+            )
 
         def _read_multipart_form(self) -> tuple[dict[str, str], dict[str, _UploadedFormFile]] | None:
             content_type = self.headers.get("Content-Type", "")
