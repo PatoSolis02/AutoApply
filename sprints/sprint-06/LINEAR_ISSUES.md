@@ -33,7 +33,7 @@ Date initialized: 2026-02-24
 - Blocked by: `AUT-11`, `AUT-12`, `AUT-13`, `AUT-14`
 
 2. `AUT-22` Sprint 06 recap and backlog rerank
-- Status: `Todo`
+- Status: `Done`
 - Blocked by: `AUT-21`
 
 ## Status Flow for This Sprint
@@ -60,3 +60,8 @@ Verification:
 - `PYTHONPATH=. python3 -m unittest discover tests` -> PASS (`22 tests`)
 - `npm test` -> PASS (`8 files, 29 tests`)
 - `npm run build` -> PASS
+
+Recap artifacts:
+
+- `sprints/sprint-06/SPRINT_LOG.md`
+- `sprints/sprint-06/RETROSPECTIVE.md`
