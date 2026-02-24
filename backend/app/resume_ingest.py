@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import re
 import zipfile
@@ -13,29 +14,42 @@ CONTRACT_VERSION = "resume_parse.v1"
 _SECTION_HEADERS = {
     "summary": "summary",
     "professional summary": "summary",
+    "about": "summary",
+    "objective": "summary",
     "profile": "summary",
     "skills": "skills",
     "technical skills": "skills",
+    "skills technologies": "skills",
     "core skills": "skills",
+    "technical proficiencies": "skills",
+    "technologies": "skills",
+    "tools": "skills",
     "experience": "experience",
     "work experience": "experience",
     "professional experience": "experience",
     "employment": "experience",
+    "work history": "experience",
+    "employment history": "experience",
     "projects": "projects",
     "selected projects": "projects",
     "education": "education",
     "academic background": "education",
 }
 _SUPPORTED_FILE_TYPES = {"pdf", "docx"}
+_MONTH_YEAR_TOKEN_PATTERN = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{4}"
+)
+_DATE_TOKEN_PATTERN = rf"(?:{_MONTH_YEAR_TOKEN_PATTERN}|\d{{1,2}}/\d{{4}}|\d{{4}})"
 _DATE_RANGE_PATTERN = re.compile(
-    r"(?P<start>(?:[A-Za-z]{3,9}\s+\d{4}|\d{4}))\s*[-\u2013\u2014]\s*(?P<end>(?:present|current|now|[A-Za-z]{3,9}\s+\d{4}|\d{4}))",
+    rf"(?P<start>{_DATE_TOKEN_PATTERN})\s*(?:[-\u2013\u2014]|to)\s*(?P<end>(?:present|current|now|{_DATE_TOKEN_PATTERN}))",
     flags=re.IGNORECASE,
 )
-_BULLET_PATTERN = re.compile(r"^[-*]\s+")
+_BULLET_PATTERN = re.compile(r"^(?:[-*]|\u2022|\u25e6|\u2023|\u2043)\s+")
 _PDF_BT_BLOCK_PATTERN = re.compile(r"BT(.*?)ET", flags=re.DOTALL)
 _PDF_TEXT_SHOW_PATTERN = re.compile(
-    r"(?P<literal>\((?:\\.|[^\\)])*\))\s*Tj|"
-    r"(?P<hex><[0-9A-Fa-f\s]+>)\s*Tj|"
+    r"(?P<literal>\((?:\\.|[^\\)])*\))\s*(?P<literal_operator>Tj|\"|')|"
+    r"(?P<hex><[0-9A-Fa-f\s]+>)\s*(?P<hex_operator>Tj|\"|')|"
     r"\[(?P<array>.*?)\]\s*TJ",
     flags=re.DOTALL,
 )
@@ -57,6 +71,32 @@ _MONTH_TO_NUM = {
     "nov": "11",
     "dec": "12",
 }
+_PDF_FILTER_ALIASES = {
+    "FlateDecode": "FlateDecode",
+    "Fl": "FlateDecode",
+    "ASCII85Decode": "ASCII85Decode",
+    "A85": "ASCII85Decode",
+    "ASCIIHexDecode": "ASCIIHexDecode",
+    "AHx": "ASCIIHexDecode",
+}
+_NAME_BLACKLIST = {"resume", "curriculum vitae", "cv"}
+_HEADLINE_LABELS = {"headline", "title", "role", "position"}
+_HEADER_METADATA_LABELS = {
+    "name",
+    "email",
+    "phone",
+    "mobile",
+    "linkedin",
+    "github",
+    "website",
+    "portfolio",
+    "location",
+    "address",
+}
+_TITLE_HINT_PATTERN = re.compile(
+    r"\b(engineer|developer|manager|analyst|intern|lead|director|architect|consultant|designer|scientist|administrator|specialist|coordinator|officer|founder|president)\b",
+    flags=re.IGNORECASE,
+)
 _SKILL_KEYWORDS = [
     "Python",
     "Java",
@@ -225,7 +265,8 @@ def _extract_pdf_stream_texts(payload: bytes) -> list[str]:
             break
 
         stream_payload = payload[data_start:stream_end].rstrip(b"\r\n")
-        for variant in _pdf_stream_variants(stream_payload):
+        stream_filters = _extract_pdf_stream_filters(payload, stream_start)
+        for variant in _pdf_stream_variants(stream_payload, stream_filters):
             text = variant.decode("latin-1", errors="ignore")
             if text:
                 texts.append(text)
@@ -235,18 +276,110 @@ def _extract_pdf_stream_texts(payload: bytes) -> list[str]:
     return texts
 
 
-def _pdf_stream_variants(stream_payload: bytes) -> list[bytes]:
+def _extract_pdf_stream_filters(payload: bytes, stream_start: int) -> list[str]:
+    window_start = max(0, stream_start - 4096)
+    dictionary_start = payload.rfind(b"<<", window_start, stream_start)
+    if dictionary_start == -1:
+        return []
+
+    dictionary_end = payload.find(b">>", dictionary_start, stream_start)
+    if dictionary_end == -1:
+        return []
+
+    dictionary = payload[dictionary_start : dictionary_end + 2].decode("latin-1", errors="ignore")
+    match = re.search(r"/Filter\s*(\[(?P<array>.*?)\]|(?P<single>/[A-Za-z0-9]+))", dictionary, flags=re.DOTALL)
+    if match is None:
+        return []
+
+    names: list[str] = []
+    if match.group("array"):
+        names = re.findall(r"/([A-Za-z0-9]+)", match.group("array"))
+    elif match.group("single"):
+        names = [match.group("single")[1:]]
+
+    filters: list[str] = []
+    for name in names:
+        normalized = _PDF_FILTER_ALIASES.get(name, "")
+        if normalized:
+            filters.append(normalized)
+    return filters
+
+
+def _pdf_stream_variants(stream_payload: bytes, filters: list[str]) -> list[bytes]:
     variants = [stream_payload]
 
-    for wbits in (None, -15):
-        try:
-            decoded = zlib.decompress(stream_payload) if wbits is None else zlib.decompress(stream_payload, wbits)
-        except zlib.error:
+    if filters:
+        decoded_with_filters = _decode_pdf_stream_with_filters(stream_payload, filters)
+        if decoded_with_filters and decoded_with_filters not in variants:
+            variants.append(decoded_with_filters)
+
+    for candidate in [stream_payload, _decode_pdf_ascii85(stream_payload), _decode_pdf_asciihex(stream_payload)]:
+        if not candidate:
             continue
-        if decoded and decoded not in variants:
-            variants.append(decoded)
+        for wbits in (None, -15):
+            try:
+                decoded = zlib.decompress(candidate) if wbits is None else zlib.decompress(candidate, wbits)
+            except zlib.error:
+                continue
+            if decoded and decoded not in variants:
+                variants.append(decoded)
 
     return variants
+
+
+def _decode_pdf_stream_with_filters(stream_payload: bytes, filters: list[str]) -> bytes | None:
+    decoded = stream_payload
+    for filter_name in filters:
+        if filter_name == "FlateDecode":
+            decoded = _decode_flate(decoded)
+        elif filter_name == "ASCII85Decode":
+            decoded = _decode_pdf_ascii85(decoded)
+        elif filter_name == "ASCIIHexDecode":
+            decoded = _decode_pdf_asciihex(decoded)
+        else:
+            return None
+
+        if decoded is None:
+            return None
+    return decoded
+
+
+def _decode_flate(payload: bytes) -> bytes | None:
+    for wbits in (None, -15):
+        try:
+            return zlib.decompress(payload) if wbits is None else zlib.decompress(payload, wbits)
+        except zlib.error:
+            continue
+    return None
+
+
+def _decode_pdf_ascii85(payload: bytes) -> bytes | None:
+    if not payload:
+        return None
+
+    for adobe in (True, False):
+        try:
+            return base64.a85decode(payload, adobe=adobe, ignorechars=b" \t\r\n")
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _decode_pdf_asciihex(payload: bytes) -> bytes | None:
+    if not payload:
+        return None
+
+    cleaned = re.sub(rb"\s+", b"", payload)
+    if b">" in cleaned:
+        cleaned = cleaned.split(b">", 1)[0]
+    if not cleaned:
+        return b""
+    if len(cleaned) % 2 == 1:
+        cleaned += b"0"
+    try:
+        return bytes.fromhex(cleaned.decode("ascii"))
+    except ValueError:
+        return None
 
 
 def _build_tounicode_map(stream_texts: list[str]) -> dict[str, str]:
@@ -342,7 +475,12 @@ def _extract_pdf_chunk_from_block(block: str, to_unicode_map: dict[str, str]) ->
     parts: list[str] = []
 
     for match in _PDF_TEXT_SHOW_PATTERN.finditer(block):
-        parts.append(_decode_pdf_text_show_match(match, to_unicode_map))
+        decoded = _decode_pdf_text_show_match(match, to_unicode_map)
+        if not decoded:
+            continue
+        if _text_show_operator(match) in {"'", '"'} and parts:
+            parts.append("\n")
+        parts.append(decoded)
 
     return "".join(parts).strip()
 
@@ -361,6 +499,16 @@ def _decode_pdf_text_show_match(match: re.Match[str], to_unicode_map: dict[str, 
         return _decode_pdf_tj_array(array_body, to_unicode_map).strip()
 
     return ""
+
+
+def _text_show_operator(match: re.Match[str]) -> str:
+    literal_operator = match.group("literal_operator")
+    if literal_operator:
+        return literal_operator
+    hex_operator = match.group("hex_operator")
+    if hex_operator:
+        return hex_operator
+    return "TJ"
 
 
 def _decode_pdf_tj_array(array_body: str, to_unicode_map: dict[str, str]) -> str:
@@ -495,6 +643,11 @@ def _map_to_profile(*, lines: list[str], profile_id: str) -> tuple[dict[str, Any
     experiences = _extract_experiences(sections.get("experience", []))
     projects = _extract_projects(sections.get("projects", []))
     education = _extract_education(sections.get("education", []))
+    inferred_skills = _infer_skills_from_entries(experiences, projects)
+    if skills:
+        skills = _dedupe_case_preserving([*skills, *inferred_skills])
+    else:
+        skills = inferred_skills
 
     if not summary:
         summary = _fallback_summary(header_lines, full_name, headline)
@@ -555,20 +708,31 @@ def _section_for_line(line: str) -> str | None:
 
 def _extract_full_name(header_lines: list[str]) -> str:
     for line in header_lines:
-        if _looks_like_contact(line):
+        labeled_name = _extract_labeled_value(line, {"name"})
+        if labeled_name:
+            return labeled_name
+
+    for line in header_lines:
+        if not _is_name_candidate(line):
             continue
-        if any(ch.isdigit() for ch in line):
-            continue
-        if 1 <= len(line.split()) <= 6:
-            return line
+        return line
     return ""
 
 
 def _extract_headline(header_lines: list[str], full_name: str) -> str | None:
     for line in header_lines:
+        labeled_headline = _extract_labeled_value(line, _HEADLINE_LABELS)
+        if labeled_headline:
+            return labeled_headline
+
+    for line in header_lines:
         if line == full_name or _looks_like_contact(line):
             continue
-        if len(line) <= 120:
+        if _is_header_metadata_line(line) or _looks_like_location(line):
+            continue
+        if _section_for_line(line) is not None:
+            continue
+        if len(line) <= 120 and any(ch.isalpha() for ch in line):
             return line
     return None
 
@@ -581,7 +745,56 @@ def _looks_like_contact(line: str) -> bool:
         return True
     if re.search(r"\+?\d[\d(). -]{7,}\d", line):
         return True
+    if _is_header_metadata_line(line):
+        return True
     return False
+
+
+def _is_header_metadata_line(line: str) -> bool:
+    lower = line.lower()
+    return any(lower.startswith(f"{label}:") for label in _HEADER_METADATA_LABELS)
+
+
+def _looks_like_location(line: str) -> bool:
+    cleaned = line.strip()
+    if not cleaned:
+        return False
+    if cleaned.lower() in {"remote", "remote, us", "united states"}:
+        return True
+    if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Z]{2}", cleaned):
+        return True
+    if re.fullmatch(r"[A-Za-z .'-]+,\s*[A-Za-z .'-]+", cleaned) and len(cleaned.split()) <= 4:
+        return True
+    return False
+
+
+def _extract_labeled_value(line: str, labels: set[str]) -> str:
+    if ":" not in line:
+        return ""
+    label_raw, value = line.split(":", 1)
+    normalized_label = re.sub(r"[^a-z ]", "", label_raw.lower()).strip()
+    if normalized_label not in labels:
+        return ""
+    normalized_value = value.strip()
+    return normalized_value if normalized_value else ""
+
+
+def _is_name_candidate(line: str) -> bool:
+    if _looks_like_contact(line) or _looks_like_location(line):
+        return False
+    if _section_for_line(line) is not None:
+        return False
+    lowered = line.lower().strip()
+    if lowered in _NAME_BLACKLIST:
+        return False
+    if any(ch.isdigit() for ch in line):
+        return False
+    words = [word for word in line.split() if word.strip()]
+    if not 1 <= len(words) <= 6:
+        return False
+    if line.strip() == line.strip().lower():
+        return False
+    return any(ch.isalpha() for ch in line)
 
 
 def _extract_summary(lines: list[str]) -> str | None:
@@ -605,12 +818,20 @@ def _extract_skills(lines: list[str]) -> list[str]:
     tokens: list[str] = []
     for line in lines:
         cleaned = _strip_bullet(line)
-        if ":" in cleaned:
-            _, cleaned = cleaned.split(":", 1)
-        pieces = [part.strip() for part in re.split(r"[,|/]", cleaned) if part.strip()]
+        if not cleaned:
+            continue
+        segments = [segment.strip() for segment in cleaned.split(";") if segment.strip()]
+        if not segments:
+            segments = [cleaned]
+
+        pieces: list[str] = []
+        for segment in segments:
+            if ":" in segment:
+                _, segment = segment.split(":", 1)
+            pieces.extend(part.strip() for part in re.split(r"[,|/]", segment) if part.strip())
         if not pieces and cleaned:
             pieces = [cleaned]
-        tokens.extend(pieces)
+        tokens.extend(piece for piece in pieces if len(piece) <= 64)
 
     if not tokens:
         return []
@@ -628,6 +849,13 @@ def _extract_experiences(lines: list[str]) -> list[dict[str, Any]]:
                 current = _new_experience(counter, "Unknown", "Unknown", "", None)
                 counter += 1
             current["bullets"].append(_strip_bullet(line))
+            continue
+
+        if current is not None and _is_date_only_line(line):
+            start_date, end_date = _extract_date_range(line)
+            if start_date:
+                current["start_date"] = start_date
+            current["end_date"] = end_date
             continue
 
         parsed_heading = _parse_heading_line(line)
@@ -678,26 +906,61 @@ def _new_experience(
 
 def _parse_heading_line(line: str) -> dict[str, str | None] | None:
     start_date, end_date = _extract_date_range(line)
-    line_without_dates = _DATE_RANGE_PATTERN.sub("", line).strip(" |-")
+    line_without_dates = _DATE_RANGE_PATTERN.sub("", line).strip(" |-\u2013\u2014")
 
-    if "|" in line_without_dates:
-        parts = [part.strip() for part in line_without_dates.split("|") if part.strip()]
-        if len(parts) >= 2:
-            return {
-                "title": parts[0],
-                "company": parts[1],
-                "start_date": start_date,
-                "end_date": end_date,
-            }
-    if " at " in line_without_dates.lower():
-        title, company = re.split(r"\s+at\s+", line_without_dates, maxsplit=1, flags=re.IGNORECASE)
+    parsed_title_company = _parse_title_company(line_without_dates)
+    if parsed_title_company is not None:
         return {
-            "title": title.strip(),
-            "company": company.strip(),
+            "title": parsed_title_company["title"],
+            "company": parsed_title_company["company"],
             "start_date": start_date,
             "end_date": end_date,
         }
     return None
+
+
+def _parse_title_company(value: str) -> dict[str, str] | None:
+    if "|" in value:
+        parts = [part.strip() for part in value.split("|") if part.strip()]
+        if len(parts) >= 2:
+            return _pair_to_title_company(parts[0], parts[1])
+
+    for pattern in (r"\s+at\s+", r"\s+@\s+"):
+        split = re.split(pattern, value, maxsplit=1, flags=re.IGNORECASE)
+        if len(split) == 2:
+            return _pair_to_title_company(split[0], split[1])
+
+    for separator_pattern in (r"\s+[,\u2013\u2014-]\s+", r",\s*"):
+        split = re.split(separator_pattern, value, maxsplit=1)
+        if len(split) == 2:
+            return _pair_to_title_company(split[0], split[1])
+
+    return None
+
+
+def _pair_to_title_company(first: str, second: str) -> dict[str, str] | None:
+    first = first.strip(" ,|")
+    second = second.strip(" ,|")
+    if not first or not second:
+        return None
+
+    first_is_title = _looks_like_title(first)
+    second_is_title = _looks_like_title(second)
+    if second_is_title and not first_is_title:
+        return {"title": second, "company": first}
+    return {"title": first, "company": second}
+
+
+def _looks_like_title(value: str) -> bool:
+    return bool(_TITLE_HINT_PATTERN.search(value))
+
+
+def _is_date_only_line(line: str) -> bool:
+    start_date, _ = _extract_date_range(line)
+    if not start_date:
+        return False
+    without_dates = _DATE_RANGE_PATTERN.sub("", line).strip(" |-\u2013\u2014")
+    return not without_dates
 
 
 def _extract_projects(lines: list[str]) -> list[dict[str, Any]]:
@@ -801,6 +1064,13 @@ def _normalize_date(value: str) -> str:
     if re.fullmatch(r"\d{4}", value):
         return f"{value}-01-01"
 
+    slash_match = re.fullmatch(r"(\d{1,2})/(\d{4})", value)
+    if slash_match:
+        month = int(slash_match.group(1))
+        year = slash_match.group(2)
+        if 1 <= month <= 12:
+            return f"{year}-{month:02d}-01"
+
     parts = value.split()
     if len(parts) == 2 and parts[1].isdigit():
         month = _MONTH_TO_NUM.get(parts[0].lower()[:3], "01")
@@ -815,6 +1085,17 @@ def _infer_skills(lines: list[str]) -> list[str]:
             if re.search(rf"\b{re.escape(keyword)}\b", line, flags=re.IGNORECASE):
                 found.append(keyword)
     return _dedupe_case_preserving(found)
+
+
+def _infer_skills_from_entries(experiences: list[dict[str, Any]], projects: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for experience in experiences:
+        lines.extend(experience.get("bullets", []))
+    for project in projects:
+        if project.get("description"):
+            lines.append(str(project["description"]))
+        lines.extend(project.get("bullets", []))
+    return _infer_skills(lines)
 
 
 def _dedupe_case_preserving(values: list[str]) -> list[str]:
