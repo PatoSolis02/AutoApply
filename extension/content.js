@@ -1,6 +1,6 @@
-function textFromSelectors(selectors) {
+function textFromSelectors(selectors, root = document) {
   for (const selector of selectors) {
-    const el = document.querySelector(selector);
+    const el = root.querySelector(selector);
     if (el && el.textContent) {
       const value = compact(el.textContent);
       if (value) {
@@ -11,11 +11,35 @@ function textFromSelectors(selectors) {
   return null;
 }
 
-function canonicalJobUrl() {
+function findActiveJobCard() {
+  return document.querySelector(".jobs-search-results__list-item--active")
+    || document.querySelector(".jobs-search-results-list__list-item--active")
+    || document.querySelector(".job-card-container--clickable[aria-current='true']")
+    || document.querySelector("li.jobs-search-results__list-item[aria-current='true']");
+}
+
+function activeCardJobUrl(activeCard) {
+  if (!activeCard) return "";
+  const link = activeCard.querySelector("a[href*='/jobs/view/']");
+  if (!link) return "";
+  const href = link.getAttribute("href");
+  if (!href) return "";
+  try {
+    return new URL(href, window.location.origin).href;
+  } catch (_error) {
+    return "";
+  }
+}
+
+function canonicalJobUrl(activeCard = null) {
   const url = new URL(window.location.href);
   const currentJobId = url.searchParams.get("currentJobId");
   if (currentJobId) {
     return `https://www.linkedin.com/jobs/view/${currentJobId}`;
+  }
+  const fromCard = activeCardJobUrl(activeCard);
+  if (fromCard && !/\/jobs\/view\//i.test(url.pathname)) {
+    return fromCard;
   }
   return url.href;
 }
@@ -33,8 +57,25 @@ function sanitizeCompanyName(value) {
   return candidate;
 }
 
+function fallbackTitleFromDocumentTitle() {
+  const cleaned = compact(document.title.replace(/\s*\|\s*LinkedIn\s*$/i, ""));
+  if (!cleaned) return "";
+
+  const atMatch = cleaned.match(/^(.*?)\s+at\s+.+$/i);
+  if (atMatch?.[1]) {
+    return compact(atMatch[1]);
+  }
+
+  const parts = cleaned.split(" - ").map((part) => compact(part)).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts[0];
+  }
+
+  return cleaned;
+}
+
 function fallbackCompanyFromDocumentTitle() {
-  const title = compact(document.title.replace(/\s*\|\s*LinkedIn\s*$/, ""));
+  const title = compact(document.title.replace(/\s*\|\s*LinkedIn\s*$/i, ""));
   if (!title) return "";
 
   const atMatch = title.match(/\bat\s+(.+)$/i);
@@ -60,6 +101,23 @@ function htmlToText(html) {
   const node = document.createElement("div");
   node.innerHTML = html;
   return readText(node);
+}
+
+function looksLikeLocation(value) {
+  const candidate = compact(value);
+  if (!candidate) return false;
+  if (/\b(remote|hybrid|on-site|onsite)\b/i.test(candidate)) return true;
+  if (/,\s*[A-Z]{2}\b/.test(candidate)) return true;
+  if (/\b(united states|usa|canada|uk|india|germany|france|spain)\b/i.test(candidate)) return true;
+  return false;
+}
+
+function looksLikeJobMeta(value) {
+  const candidate = compact(value);
+  if (!candidate) return false;
+  return /^\d+\+?\s+applicants?/i.test(candidate)
+    || /^\d+\s+(hour|day|week|month)s?\s+ago$/i.test(candidate)
+    || /^(easy apply|promoted|reposted)$/i.test(candidate);
 }
 
 function isJobPostingType(typeValue) {
@@ -122,7 +180,7 @@ function extractFromJsonLd() {
   return best;
 }
 
-function fallbackCompanyFromTopCard() {
+function fallbackCompanyFromTopCard(knownTitle = "") {
   const topCard = document.querySelector(".jobs-unified-top-card")
     || document.querySelector(".job-details-jobs-unified-top-card__container")
     || document.querySelector(".job-details-jobs-unified-top-card");
@@ -147,7 +205,105 @@ function fallbackCompanyFromTopCard() {
     }
   }
 
+  for (const line of lines) {
+    const candidate = sanitizeCompanyName(line);
+    if (!candidate) continue;
+    if (knownTitle && candidate.toLowerCase() === knownTitle.toLowerCase()) continue;
+    if (looksLikeLocation(candidate)) continue;
+    if (looksLikeJobMeta(candidate)) continue;
+    return candidate;
+  }
+
   return "";
+}
+
+function fallbackCompanyFromActiveCard(activeCard) {
+  if (!activeCard) return "";
+
+  const fromSelectors = textFromSelectors([
+    ".job-card-container__company-name",
+    ".artdeco-entity-lockup__subtitle span",
+    "a[href*='/company/']",
+  ], activeCard);
+  return sanitizeCompanyName(fromSelectors || "");
+}
+
+function fallbackTitleFromActiveCard(activeCard) {
+  if (!activeCard) return "";
+  return textFromSelectors([
+    ".job-card-list__title",
+    ".job-card-list__title--link",
+    ".job-card-container__link",
+    "a[href*='/jobs/view/']",
+  ], activeCard) || "";
+}
+
+function fallbackLocationFromActiveCard(activeCard, company = "") {
+  if (!activeCard) return "";
+  const selectors = [
+    ".job-card-container__metadata-item",
+    ".job-card-container__metadata-wrapper li",
+    ".job-card-container__job-insight",
+    ".job-card-container__footer-item",
+  ];
+
+  for (const selector of selectors) {
+    const matches = Array.from(activeCard.querySelectorAll(selector));
+    for (const match of matches) {
+      const value = compact(match.textContent || "");
+      if (!value) continue;
+      if (company && value.toLowerCase() === company.toLowerCase()) continue;
+      if (!looksLikeLocation(value)) continue;
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function locationFromTopCard(company = "") {
+  const selectors = [
+    ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
+    ".job-details-jobs-unified-top-card__primary-description-container span",
+    ".jobs-unified-top-card__bullet",
+    ".jobs-unified-top-card__subtitle-primary-grouping span",
+    ".jobs-unified-top-card__primary-description span",
+    ".jobs-unified-top-card__primary-description",
+  ];
+  for (const selector of selectors) {
+    const matches = Array.from(document.querySelectorAll(selector));
+    for (const match of matches) {
+      const value = compact(match.textContent || "");
+      if (!value) continue;
+      if (company && value.toLowerCase() === company.toLowerCase()) continue;
+      if (looksLikeJobMeta(value)) continue;
+      if (!looksLikeLocation(value)) continue;
+      return value;
+    }
+  }
+  return "";
+}
+
+function fallbackDescriptionFromActiveCard(activeCard) {
+  if (!activeCard) return "";
+
+  const direct = textFromSelectors([
+    ".job-card-list__description",
+    ".job-card-container__description",
+    "[class*='job-card-list__description']",
+  ], activeCard);
+  if (direct && direct.length >= 40) {
+    return direct;
+  }
+
+  const insightNodes = Array.from(
+    activeCard.querySelectorAll(".job-card-container__job-insight, .job-card-container__footer-item")
+  );
+  if (insightNodes.length === 0) {
+    return "";
+  }
+  const combined = compact(insightNodes.map((node) => readText(node)).filter(Boolean).join(" "));
+  return combined.length >= 60 ? combined : "";
 }
 
 function fallbackDescriptionFromPanel() {
@@ -166,7 +322,7 @@ function fallbackDescriptionFromPanel() {
     "[class*='show-more-less-html__markup']",
     "[class*='jobs-description-content']",
   ]);
-  if (targeted && targeted.length >= 80) {
+  if (targeted && targeted.length >= 60) {
     return targeted;
   }
 
@@ -180,13 +336,32 @@ function fallbackDescriptionFromPanel() {
     const index = lowered.indexOf(anchor);
     if (index >= 0) {
       const candidate = compact(text.slice(index));
-      if (candidate.length >= 80) {
+      if (candidate.length >= 60) {
         return candidate;
       }
     }
   }
 
-  return text.length >= 160 ? text : "";
+  return text.length >= 120 ? text : "";
+}
+
+function fallbackDescriptionFromMeta() {
+  const candidates = [
+    "meta[property='og:description']",
+    "meta[name='description']",
+  ];
+  let content = "";
+  for (const selector of candidates) {
+    const el = document.querySelector(selector);
+    const value = compact(el?.getAttribute("content") || "");
+    if (value) {
+      content = value;
+      break;
+    }
+  }
+  if (!content) return "";
+  const asText = htmlToText(content);
+  return asText.length >= 40 ? asText : "";
 }
 
 function fallbackDescriptionFromPage() {
@@ -207,11 +382,12 @@ function fallbackDescriptionFromPage() {
     return compact(text.slice(descriptionIndex, Math.min(text.length, descriptionIndex + 5000)));
   }
 
-  return text.length >= 300 ? text.slice(0, 3000) : "";
+  return text.length >= 120 ? text.slice(0, 3000) : "";
 }
 
 function extractJobDetails() {
   const jsonLd = extractFromJsonLd();
+  const activeCard = findActiveJobCard();
 
   const title = textFromSelectors([
     ".job-details-jobs-unified-top-card__job-title h1",
@@ -220,7 +396,7 @@ function extractJobDetails() {
     ".jobs-unified-top-card__job-title",
     "[data-test-job-title]",
     "h1"
-  ]);
+  ]) || fallbackTitleFromActiveCard(activeCard) || fallbackTitleFromDocumentTitle();
 
   const company = textFromSelectors([
     ".job-details-jobs-unified-top-card__company-name a",
@@ -238,14 +414,16 @@ function extractJobDetails() {
     "a[href*='/company/'] span",
     "a[href*='/company/']"
   ]);
-
-  const location = textFromSelectors([
-    ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
-    ".job-details-jobs-unified-top-card__primary-description-container span",
-    ".jobs-unified-top-card__bullet",
-    ".jobs-unified-top-card__subtitle-primary-grouping",
-    ".jobs-unified-top-card__primary-description"
-  ]);
+  const normalizedCompany =
+    sanitizeCompanyName(company)
+    || fallbackCompanyFromTopCard(title)
+    || fallbackCompanyFromActiveCard(activeCard)
+    || jsonLd.company
+    || fallbackCompanyFromDocumentTitle();
+  const location =
+    locationFromTopCard(normalizedCompany)
+    || fallbackLocationFromActiveCard(activeCard, normalizedCompany)
+    || null;
 
   const descriptionNode = document.querySelector("#job-details")
     || document.querySelector(".jobs-description-content__text")
@@ -260,18 +438,16 @@ function extractJobDetails() {
   const descriptionRaw = descriptionNode ? compact(descriptionNode.innerText) : "";
 
   return {
-    title: title || document.title.replace(/\s*\|\s*LinkedIn\s*$/, "").trim(),
-    company:
-      sanitizeCompanyName(company)
-      || fallbackCompanyFromTopCard()
-      || jsonLd.company
-      || fallbackCompanyFromDocumentTitle(),
+    title,
+    company: normalizedCompany,
     location,
-    job_url: canonicalJobUrl(),
+    job_url: canonicalJobUrl(activeCard),
     description_raw:
       descriptionRaw
       || jsonLd.description
       || fallbackDescriptionFromPanel()
+      || fallbackDescriptionFromActiveCard(activeCard)
+      || fallbackDescriptionFromMeta()
       || fallbackDescriptionFromPage()
   };
 }
