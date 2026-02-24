@@ -522,63 +522,18 @@ def _build_handler(capture_db: CaptureDatabase):
                 return
 
             fields, files = form
-
-            upload_field_name = "file" if "file" in files else ("resume" if "resume" in files else None)
-            if upload_field_name is None:
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": "file", "message": "is required (or provide legacy 'resume' field)"}],
-                    },
-                )
+            upload = self._read_resume_upload_payload(files)
+            if upload is None:
                 return
+            filename, payload, upload_content_type = upload
 
-            upload_field = files[upload_field_name]
-            filename = upload_field.filename
-            payload = upload_field.payload
-            upload_content_type = upload_field.content_type
-
-            if not filename.strip():
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": upload_field_name, "message": "must include a filename"}],
-                    },
-                )
+            profile_id = self._read_profile_id_field(fields)
+            if profile_id is None:
                 return
-            if not payload:
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": upload_field_name, "message": "must not be empty"}],
-                    },
-                )
-                return
-
-            profile_id_raw = fields.get("profile_id")
-            profile_id = "primary"
-            if profile_id_raw is not None:
-                if not profile_id_raw.strip():
-                    _json_response(
-                        self,
-                        HTTPStatus.BAD_REQUEST,
-                        {
-                            "detail": "invalid request payload",
-                            "errors": [{"field": "profile_id", "message": "must be a non-empty string"}],
-                        },
-                    )
-                    return
-                profile_id = profile_id_raw.strip()
 
             try:
                 parsed = parse_resume_upload(
-                    filename=filename.strip(),
+                    filename=filename,
                     payload=payload,
                     profile_id=profile_id,
                     content_type=upload_content_type,
@@ -609,6 +564,38 @@ def _build_handler(capture_db: CaptureDatabase):
                 parser_name=parsed.get("source", {}).get("parser"),
             )
             _json_response(self, HTTPStatus.OK, parsed)
+
+        def _read_resume_upload_payload(
+            self,
+            files: dict[str, _UploadedFormFile],
+        ) -> tuple[str, bytes, str | None] | None:
+            upload_field_name = "file" if "file" in files else ("resume" if "resume" in files else None)
+            if upload_field_name is None:
+                self._invalid_request_field("file", "is required (or provide legacy 'resume' field)")
+                return None
+
+            upload_field = files[upload_field_name]
+            filename = upload_field.filename.strip()
+            if not filename:
+                self._invalid_request_field(upload_field_name, "must include a filename")
+                return None
+
+            payload = upload_field.payload
+            if not payload:
+                self._invalid_request_field(upload_field_name, "must not be empty")
+                return None
+            return filename, payload, upload_field.content_type
+
+        def _read_profile_id_field(self, fields: dict[str, str]) -> str | None:
+            profile_id_raw = fields.get("profile_id")
+            if profile_id_raw is None:
+                return "primary"
+
+            profile_id = profile_id_raw.strip()
+            if not profile_id:
+                self._invalid_request_field("profile_id", "must be a non-empty string")
+                return None
+            return profile_id
 
         def _begin_request(self, method: str) -> None:
             parsed = urlparse(self.path)
@@ -754,16 +741,19 @@ def _build_handler(capture_db: CaptureDatabase):
         def _read_required_non_empty_string(self, payload: dict[str, Any], field: str) -> Optional[str]:
             value = payload.get(field)
             if not isinstance(value, str) or not value.strip():
-                _json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "detail": "invalid request payload",
-                        "errors": [{"field": field, "message": "is required"}],
-                    },
-                )
+                self._invalid_request_field(field, "is required")
                 return None
             return value.strip()
+
+        def _invalid_request_field(self, field: str, message: str) -> None:
+            _json_response(
+                self,
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "detail": "invalid request payload",
+                    "errors": [{"field": field, "message": message}],
+                },
+            )
 
         def _read_positive_int(self, value: str, *, default: int) -> Optional[int]:
             if value is None or value == "":

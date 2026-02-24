@@ -128,6 +128,23 @@ function envelopeCandidates(payload: unknown): Record<string, unknown>[] {
   return candidates;
 }
 
+async function requestAcrossPaths(
+  paths: string[],
+  requestForPath: (path: string) => Promise<unknown>,
+): Promise<unknown> {
+  for (const [index, path] of paths.entries()) {
+    try {
+      return await requestForPath(path);
+    } catch (error) {
+      const isFinalPath = index === paths.length - 1;
+      if (!(error instanceof ApiError) || error.status !== 404 || isFinalPath) {
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -164,6 +181,35 @@ function readIdFromObject(value: unknown): string | undefined {
 function readWarningsFromEnvelope(envelope: Record<string, unknown> | null): string[] {
   if (!envelope) return [];
   return readStringArray(envelope.warnings ?? envelope.warning_messages ?? envelope.warningMessages);
+}
+
+function readEnvelopeId(
+  envelope: Record<string, unknown>,
+  options: {
+    directKeys: string[];
+    objectKeys: string[];
+  },
+): string | undefined {
+  for (const key of options.directKeys) {
+    const value = readNonEmptyString(envelope[key]);
+    if (value) return value;
+  }
+  for (const key of options.objectKeys) {
+    const value = readIdFromObject(envelope[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function readProfileDraftFromEnvelope(envelope: Record<string, unknown>): UpsertUserProfileRequest | null {
+  return (
+    toProfileDraft(envelope.profile) ??
+    toProfileDraft(envelope.parsed_profile) ??
+    toProfileDraft(envelope.parsedProfile) ??
+    toProfileDraft(envelope.resume_profile) ??
+    toProfileDraft(envelope.resumeProfile) ??
+    toProfileDraft(envelope)
+  );
 }
 
 function toProfileDraft(value: unknown): UpsertUserProfileRequest | null {
@@ -253,39 +299,26 @@ export async function getResumeTimeline(applicationId: string): Promise<ResumeTi
 
 export async function captureJob(payload: CaptureJobRequest): Promise<CaptureJobResponse> {
   const capturePaths = dedupePaths([CAPTURE_PATH, CAPTURE_LEGACY_PATH]);
-  let rawPayload: unknown = null;
-  let lastError: unknown;
-
-  for (const path of capturePaths) {
-    try {
-      rawPayload = await request<unknown>(path, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      break;
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 404 || path === capturePaths[capturePaths.length - 1]) {
-        throw error;
-      }
-      lastError = error;
-    }
-  }
+  const rawPayload = await requestAcrossPaths(capturePaths, (path) =>
+    request<unknown>(path, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  );
 
   if (rawPayload === null) {
-    if (lastError instanceof ApiError) throw lastError;
-    throw new ApiError(502, 'Capture request did not return a response payload.', lastError ?? null);
+    throw new ApiError(502, 'Capture request did not return a response payload.', null);
   }
 
   for (const envelope of envelopeCandidates(rawPayload)) {
-    const applicationId =
-      readNonEmptyString(envelope.application_id) ??
-      readNonEmptyString(envelope.applicationId) ??
-      readIdFromObject(envelope.application);
-    const jobPostingId =
-      readNonEmptyString(envelope.job_posting_id) ??
-      readNonEmptyString(envelope.jobPostingId) ??
-      readIdFromObject(envelope.job_posting) ??
-      readIdFromObject(envelope.jobPosting);
+    const applicationId = readEnvelopeId(envelope, {
+      directKeys: ['application_id', 'applicationId'],
+      objectKeys: ['application'],
+    });
+    const jobPostingId = readEnvelopeId(envelope, {
+      directKeys: ['job_posting_id', 'jobPostingId'],
+      objectKeys: ['job_posting', 'jobPosting'],
+    });
     if (applicationId && jobPostingId) {
       return {
         application_id: applicationId,
@@ -311,11 +344,10 @@ export async function generateResumeVersion(
   });
 
   for (const envelope of envelopeCandidates(rawPayload)) {
-    const resumeVersionId =
-      readNonEmptyString(envelope.resume_version_id) ??
-      readNonEmptyString(envelope.resumeVersionId) ??
-      readIdFromObject(envelope.resume_version) ??
-      readIdFromObject(envelope.resumeVersion);
+    const resumeVersionId = readEnvelopeId(envelope, {
+      directKeys: ['resume_version_id', 'resumeVersionId'],
+      objectKeys: ['resume_version', 'resumeVersion'],
+    });
     if (!resumeVersionId) continue;
 
     return {
@@ -373,35 +405,16 @@ export async function uploadResumeToProfile(file: File): Promise<ResumeIngestRes
     '/api/v1/profile/ingest',
   ]);
 
-  let payload: unknown = null;
-  let lastError: unknown;
-  for (const path of parseEndpoints) {
-    try {
-      payload = await parseResumeUpload(path, file);
-      break;
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 404 || path === parseEndpoints[parseEndpoints.length - 1]) {
-        throw error;
-      }
-      lastError = error;
-    }
-  }
+  const payload = await requestAcrossPaths(parseEndpoints, (path) => parseResumeUpload(path, file));
 
   if (payload === null) {
-    if (lastError instanceof ApiError) throw lastError;
-    throw new ApiError(502, 'Resume parse request did not return a response payload.', lastError ?? null);
+    throw new ApiError(502, 'Resume parse request did not return a response payload.', null);
   }
 
   let draft: UpsertUserProfileRequest | null = null;
   let warnings: string[] = [];
   for (const envelope of envelopeCandidates(payload)) {
-    draft =
-      toProfileDraft(envelope.profile) ??
-      toProfileDraft(envelope.parsed_profile) ??
-      toProfileDraft(envelope.parsedProfile) ??
-      toProfileDraft(envelope.resume_profile) ??
-      toProfileDraft(envelope.resumeProfile) ??
-      toProfileDraft(envelope);
+    draft = readProfileDraftFromEnvelope(envelope);
     if (draft) {
       warnings = readWarningsFromEnvelope(envelope);
       break;
