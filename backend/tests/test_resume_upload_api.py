@@ -147,6 +147,58 @@ class ResumeUploadApiTests(unittest.TestCase):
         self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
         self.assertEqual(parsed["profile"]["experiences"][0]["company"], "Acme Corp")
 
+    def test_resume_parse_upload_accepts_legacy_endpoint_alias(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds backend systems.",
+                "SKILLS",
+                "Python, FastAPI, SQL",
+            ]
+        )
+        content_type, body = _build_multipart(
+            files=[("file", "resume.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", payload)],
+        )
+
+        status, parsed = self._request(
+            "POST",
+            "/api/v1/profile/ingest",
+            body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(parsed["contract_version"], "resume_parse.v1")
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+
+    def test_resume_parse_upload_accepts_legacy_resume_file_field_alias(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds backend systems.",
+                "SKILLS",
+                "Python, FastAPI, SQL",
+            ]
+        )
+        content_type, body = _build_multipart(
+            files=[("resume", "resume.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", payload)],
+        )
+
+        status, parsed = self._request(
+            "POST",
+            "/api/v1/profile/resume-parse",
+            body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(parsed["contract_version"], "resume_parse.v1")
+        self.assertEqual(parsed["profile"]["full_name"], "Taylor Dev")
+
     def test_resume_parse_upload_rejects_non_multipart_payload(self) -> None:
         status, body = self._request(
             "POST",

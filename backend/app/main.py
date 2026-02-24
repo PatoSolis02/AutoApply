@@ -41,6 +41,7 @@ _RESUME_VERSION_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)$")
 _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/approve$")
 _PROFILE_PATH = "/api/v1/profile"
 _PROFILE_RESUME_PARSE_PATH = "/api/v1/profile/resume-parse"
+_PROFILE_RESUME_PARSE_LEGACY_PATH = "/api/v1/profile/ingest"
 _HEALTH_PATH = "/health"
 _ALLOWED_STATUSES = {
     "captured",
@@ -135,7 +136,7 @@ def _build_handler(capture_db: CaptureDatabase):
                 self._handle_capture()
                 return
 
-            if parsed.path == _PROFILE_RESUME_PARSE_PATH:
+            if parsed.path in {_PROFILE_RESUME_PARSE_PATH, _PROFILE_RESUME_PARSE_LEGACY_PATH}:
                 self._handle_parse_resume_upload()
                 return
 
@@ -407,18 +408,19 @@ def _build_handler(capture_db: CaptureDatabase):
 
             fields, files = form
 
-            if "file" not in files:
+            upload_field_name = "file" if "file" in files else ("resume" if "resume" in files else None)
+            if upload_field_name is None:
                 _json_response(
                     self,
                     HTTPStatus.BAD_REQUEST,
                     {
                         "detail": "invalid request payload",
-                        "errors": [{"field": "file", "message": "is required"}],
+                        "errors": [{"field": "file", "message": "is required (or provide legacy 'resume' field)"}],
                     },
                 )
                 return
 
-            upload_field = files["file"]
+            upload_field = files[upload_field_name]
             filename = upload_field.filename
             payload = upload_field.payload
             upload_content_type = upload_field.content_type
@@ -429,7 +431,7 @@ def _build_handler(capture_db: CaptureDatabase):
                     HTTPStatus.BAD_REQUEST,
                     {
                         "detail": "invalid request payload",
-                        "errors": [{"field": "file", "message": "must include a filename"}],
+                        "errors": [{"field": upload_field_name, "message": "must include a filename"}],
                     },
                 )
                 return
@@ -439,7 +441,7 @@ def _build_handler(capture_db: CaptureDatabase):
                     HTTPStatus.BAD_REQUEST,
                     {
                         "detail": "invalid request payload",
-                        "errors": [{"field": "file", "message": "must not be empty"}],
+                        "errors": [{"field": upload_field_name, "message": "must not be empty"}],
                     },
                 )
                 return
