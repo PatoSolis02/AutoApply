@@ -32,6 +32,10 @@ Run from repository root unless noted.
 
 - `PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_*.py'`
 
+### Workflow smoke tests
+
+- `PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_workflow_smoke_api.py'`
+
 ## Notes
 
 - If local `python3` is below `3.11`, install/select a `3.11.x` interpreter before running Python test commands.
