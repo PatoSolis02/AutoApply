@@ -16,6 +16,47 @@
 4. Contract changes must be proposed to integration owner before implementation in parallel threads.
 5. Integration owner merges by dependency order and is final conflict resolver.
 
+## Git Worktree Requirement (Parallel Safety)
+
+- Every active implementation thread must run in its own git worktree.
+- Do not run multiple active threads in the same working directory.
+- Each worktree maps to exactly one branch and one thread owner.
+
+Recommended setup pattern:
+
+1. Create branch from integration:
+- `git checkout -b codex/<thread-branch-name> codex/integration`
+
+2. Add worktree for the thread:
+- `git worktree add /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/<thread-name> codex/<thread-branch-name>`
+
+3. Execute thread work only inside that worktree path.
+
+4. Remove worktree after integration:
+- `git worktree remove /Users/pato/Library/CloudStorage/OneDrive-rit.edu/Desktop/worktrees/<thread-name>`
+
+Naming convention:
+
+- Branch: `codex/<topic>-<scope>`
+- Worktree folder: `autoapply_<topic>_<scope>`
+
+Validation rule:
+
+- Before kickoff, run `git worktree list` and confirm each active thread has a unique path and branch.
+
+## Sprint Definition (Thread-Batch Model)
+
+In this project, a sprint is not primarily a time box.  
+A sprint is a selected batch of parallel threads that can run together without overlap, then integrate, recap, and repeat.
+
+Sprint lifecycle:
+
+1. Select thread batch from backlog by priority + dependency readiness.
+2. Launch all non-overlapping threads in parallel (each in separate worktree).
+3. Integrate all completed thread handoffs into `codex/integration`.
+4. Run recap/retrospective and update backlog ordering.
+5. Start next sprint batch from the updated queue.
+
 ## Workstreams
 
 ### WS-A: Capture and Ingest

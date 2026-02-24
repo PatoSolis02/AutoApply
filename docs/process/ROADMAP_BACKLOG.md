@@ -130,35 +130,48 @@ Recommended active split for current queue (example, topic-safe):
 5. Thread E: QA, observability, and technical debt cleanup
 - `Q-4`, `C-1`, `C-2`
 
-## Sprint Structure Recommendation
+## Sprint Structure Recommendation (Thread-Batch Model)
 
-Use a consistent 2-week sprint with topic-based goals.
+Sprint meaning in this repo:
 
-1. Planning and partitioning (Day 1)
-- Pick highest-priority items from the ordered queue.
-- Partition into non-overlapping threads using file ownership map.
-- Define contract assumptions and integration order up front.
+- A sprint is the group of threads we choose to run in parallel together, then integrate, recap, and move on.
+- It is a delivery batch model first; calendar length is secondary.
 
-2. Parallel build window (Days 2-7)
-- Threads execute independently with minimal cross-talk.
-- Mid-sprint checkpoint only for blockers or contract deltas.
-- Keep one owner per task and per primary file area.
+How to decide which threads/tasks run together:
 
-3. Integration and hardening (Days 8-9)
-- Integration owner merges by dependency order.
-- Resolve conflicts, run full backend/frontend test suites, run smoke flow.
-- Handle only P0/P1 regressions before sprint close.
+1. Start from top of `Ordered Task Queue`.
+2. Take highest-priority tasks that are dependency-ready.
+3. Build a candidate batch using non-overlapping ownership boundaries:
+- different primary files/directories
+- no conflicting contract edits
+- minimal merge collision risk
+4. Stop adding tasks when overlap risk rises or integration complexity becomes high.
+5. Launch each selected task as its own thread + worktree.
 
-4. Demo and close (Day 10)
-- Demo highest-priority user-visible improvements.
-- Publish sprint log, retrospective, and thread reflections.
-- Update this backlog with new priorities, carry-overs, and risks.
+Thread-batch selection checklist:
 
-Capacity and guardrails:
+1. Priority: Is this task priority `1` or `2`?
+2. Readiness: Are prerequisites already merged?
+3. Overlap: Does it share primary files/contracts with an active thread?
+4. Risk: Will running this in parallel create likely merge conflicts?
+5. Demo value: Does batch output produce visible progress?
 
-- Reserve 20-30% sprint capacity for bug fixes/regressions/hotfixes.
-- Limit each thread to one primary objective plus one secondary objective.
-- A sprint is complete only when integration branch is stable and documented.
+Recommended batch size:
+
+- Usually 3-5 parallel threads.
+- Expand only when ownership is cleanly separable.
+- Reduce when task coupling is high.
+
+Sprint close criteria (for each batch):
+
+1. All selected thread handoffs integrated into `codex/integration`.
+2. Full verification suite passes on integration.
+3. Sprint recap docs are completed.
+4. This backlog is re-ranked before next batch kickoff.
+
+Capacity guardrail:
+
+- Keep 20-30% capacity for regressions/hotfixes discovered during integration.
 
 Integration thread responsibilities:
 - Merge and resolve cross-thread contract conflicts.
