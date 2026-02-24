@@ -17,6 +17,8 @@ import {
 const API_BASE = '/api/v1';
 const PROFILE_PARSE_PATH = (import.meta.env.VITE_PROFILE_INGEST_PATH as string | undefined) ?? '/profile/resume-parse';
 const PROFILE_PARSE_LEGACY_PATH = '/profile/ingest';
+const CAPTURE_PATH = '/jobs/capture';
+const CAPTURE_LEGACY_PATH = '/capture';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -47,7 +49,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(resolveApiPath(path), {
     ...init,
     headers,
   });
@@ -89,6 +91,43 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function resolveApiPath(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    return path;
+  }
+
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  if (normalized.startsWith('/api/')) {
+    return normalized;
+  }
+  return `${API_BASE}${normalized}`;
+}
+
+function dedupePaths(paths: string[]): string[] {
+  const unique = new Set<string>();
+  for (const path of paths) {
+    const trimmed = path.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed.startsWith('/') || trimmed.startsWith('http') ? trimmed : `/${trimmed}`);
+  }
+  return [...unique];
+}
+
+function envelopeCandidates(payload: unknown): Record<string, unknown>[] {
+  const root = asObject(payload);
+  if (!root) return [];
+
+  const candidates: Record<string, unknown>[] = [root];
+  const nestedKeys = ['data', 'result', 'response', 'payload'];
+  for (const key of nestedKeys) {
+    const nested = asObject(root[key]);
+    if (nested) {
+      candidates.push(nested);
+    }
+  }
+  return candidates;
+}
+
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -108,6 +147,23 @@ function readNullableString(value: unknown): string | null | undefined {
     return trimmed ? trimmed : null;
   }
   return undefined;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function readIdFromObject(value: unknown): string | undefined {
+  const source = asObject(value);
+  if (!source) return undefined;
+  return readNonEmptyString(source.id) ?? readNonEmptyString(source.uuid);
+}
+
+function readWarningsFromEnvelope(envelope: Record<string, unknown> | null): string[] {
+  if (!envelope) return [];
+  return readStringArray(envelope.warnings ?? envelope.warning_messages ?? envelope.warningMessages);
 }
 
 function toProfileDraft(value: unknown): UpsertUserProfileRequest | null {
@@ -196,20 +252,84 @@ export async function getResumeTimeline(applicationId: string): Promise<ResumeTi
 }
 
 export async function captureJob(payload: CaptureJobRequest): Promise<CaptureJobResponse> {
-  return request<CaptureJobResponse>('/jobs/capture', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  const capturePaths = dedupePaths([CAPTURE_PATH, CAPTURE_LEGACY_PATH]);
+  let rawPayload: unknown = null;
+  let lastError: unknown;
+
+  for (const path of capturePaths) {
+    try {
+      rawPayload = await request<unknown>(path, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      break;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404 || path === capturePaths[capturePaths.length - 1]) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  if (rawPayload === null) {
+    if (lastError instanceof ApiError) throw lastError;
+    throw new ApiError(502, 'Capture request did not return a response payload.', lastError ?? null);
+  }
+
+  for (const envelope of envelopeCandidates(rawPayload)) {
+    const applicationId =
+      readNonEmptyString(envelope.application_id) ??
+      readNonEmptyString(envelope.applicationId) ??
+      readIdFromObject(envelope.application);
+    const jobPostingId =
+      readNonEmptyString(envelope.job_posting_id) ??
+      readNonEmptyString(envelope.jobPostingId) ??
+      readIdFromObject(envelope.job_posting) ??
+      readIdFromObject(envelope.jobPosting);
+    if (applicationId && jobPostingId) {
+      return {
+        application_id: applicationId,
+        job_posting_id: jobPostingId,
+      };
+    }
+  }
+
+  throw new ApiError(
+    502,
+    'Capture succeeded but response did not include application_id and job_posting_id in a supported envelope.',
+    rawPayload,
+  );
 }
 
 export async function generateResumeVersion(
   applicationId: string,
   templateId: string,
 ): Promise<GenerateResumeVersionResponse> {
-  return request<GenerateResumeVersionResponse>(`/applications/${applicationId}/resume-versions/generate`, {
+  const rawPayload = await request<unknown>(`/applications/${applicationId}/resume-versions/generate`, {
     method: 'POST',
     body: JSON.stringify({ template_id: templateId }),
   });
+
+  for (const envelope of envelopeCandidates(rawPayload)) {
+    const resumeVersionId =
+      readNonEmptyString(envelope.resume_version_id) ??
+      readNonEmptyString(envelope.resumeVersionId) ??
+      readIdFromObject(envelope.resume_version) ??
+      readIdFromObject(envelope.resumeVersion);
+    if (!resumeVersionId) continue;
+
+    return {
+      resume_version_id: resumeVersionId,
+      warnings: readStringArray(envelope.warnings ?? envelope.warning_messages ?? envelope.warningMessages),
+      blocked_reasons: readStringArray(envelope.blocked_reasons ?? envelope.blockedReasons),
+    };
+  }
+
+  throw new ApiError(
+    502,
+    'Resume generation succeeded but response did not include resume_version_id in a supported envelope.',
+    rawPayload,
+  );
 }
 
 export async function getResumeVersion(resumeVersionId: string): Promise<ResumeVersionDetail> {
@@ -244,31 +364,58 @@ async function parseResumeUpload(path: string, file: File): Promise<unknown> {
 }
 
 export async function uploadResumeToProfile(file: File): Promise<ResumeIngestResult> {
-  let payload: unknown;
-  try {
-    payload = await parseResumeUpload(PROFILE_PARSE_PATH, file);
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 404 || PROFILE_PARSE_PATH === PROFILE_PARSE_LEGACY_PATH) {
-      throw error;
+  const parseEndpoints = dedupePaths([
+    PROFILE_PARSE_PATH,
+    '/profile/resume-parse',
+    PROFILE_PARSE_LEGACY_PATH,
+    '/profile/ingest',
+    '/api/v1/profile/resume-parse',
+    '/api/v1/profile/ingest',
+  ]);
+
+  let payload: unknown = null;
+  let lastError: unknown;
+  for (const path of parseEndpoints) {
+    try {
+      payload = await parseResumeUpload(path, file);
+      break;
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404 || path === parseEndpoints[parseEndpoints.length - 1]) {
+        throw error;
+      }
+      lastError = error;
     }
-    payload = await parseResumeUpload(PROFILE_PARSE_LEGACY_PATH, file);
   }
 
-  const envelope = asObject(payload);
-  const draft =
-    toProfileDraft(envelope?.profile) ??
-    toProfileDraft(envelope?.parsed_profile) ??
-    toProfileDraft(payload);
+  if (payload === null) {
+    if (lastError instanceof ApiError) throw lastError;
+    throw new ApiError(502, 'Resume parse request did not return a response payload.', lastError ?? null);
+  }
+
+  let draft: UpsertUserProfileRequest | null = null;
+  let warnings: string[] = [];
+  for (const envelope of envelopeCandidates(payload)) {
+    draft =
+      toProfileDraft(envelope.profile) ??
+      toProfileDraft(envelope.parsed_profile) ??
+      toProfileDraft(envelope.parsedProfile) ??
+      toProfileDraft(envelope.resume_profile) ??
+      toProfileDraft(envelope.resumeProfile) ??
+      toProfileDraft(envelope);
+    if (draft) {
+      warnings = readWarningsFromEnvelope(envelope);
+      break;
+    }
+  }
 
   if (!draft) {
     throw new ApiError(
       502,
-      'Resume upload succeeded but the response did not include a usable profile payload from the S4-A contract.',
+      'Resume upload succeeded but response did not include a supported profile envelope (profile, parsed_profile, or direct profile object).',
       payload,
     );
   }
 
-  const warnings = readStringArray(envelope?.warnings);
   return { profile: draft, warnings };
 }
 
