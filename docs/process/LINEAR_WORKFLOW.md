@@ -118,6 +118,26 @@ Use these statuses consistently:
 5. `Blocked`
 - cannot continue without external dependency/decision
 
+## Sprint Kickoff Protocol (Linear-First)
+
+At sprint start, select work only from Linear `Backlog` issues and move selected items through kickoff states.
+
+Required kickoff sequence:
+
+1. Select sprint batch from Linear backlog by priority + dependency readiness.
+2. Apply sprint label (`sprint-XX`) to selected issues.
+3. Move selected implementation issues to `Todo`.
+4. Move each issue to `In Progress` only when:
+- dedicated branch/worktree is created
+- owner thread has started coding
+5. Move issue to `In Review` when handoff is complete and awaiting integration.
+6. Move issue to `Done` only after merge + verification on `codex/integration`.
+
+Sprint tracking issues:
+
+1. Create one integration issue in `Todo`, blocked by all selected implementation issues.
+2. Create one retrospective issue in `Todo`, blocked by integration issue.
+
 ## Worktree Enforcement
 
 Every `In Progress` thread must have a unique worktree.
