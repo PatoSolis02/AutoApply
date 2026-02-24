@@ -263,6 +263,39 @@ class ResumeUploadApiTests(unittest.TestCase):
         self.assertEqual(response["detail"], "invalid request payload")
         self.assertEqual(response["errors"][0]["field"], "file")
 
+    def test_resume_parse_upload_rejects_empty_file_payload(self) -> None:
+        content_type, body = _build_multipart(
+            files=[("file", "resume.pdf", "application/pdf", b"")],
+        )
+        status, response = self._request(
+            "POST",
+            "/api/v1/profile/resume-parse",
+            body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(response["detail"], "invalid request payload")
+        self.assertEqual(response["errors"][0]["field"], "file")
+        self.assertEqual(response["errors"][0]["message"], "must not be empty")
+
+    def test_resume_parse_upload_rejects_blank_profile_id(self) -> None:
+        content_type, body = _build_multipart(
+            fields={"profile_id": "   "},
+            files=[("file", "resume.pdf", "application/pdf", b"%PDF-1.4\n(Taylor Dev) Tj\n")],
+        )
+        status, response = self._request(
+            "POST",
+            "/api/v1/profile/resume-parse",
+            body=body,
+            headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(response["detail"], "invalid request payload")
+        self.assertEqual(response["errors"][0]["field"], "profile_id")
+        self.assertEqual(response["errors"][0]["message"], "must be a non-empty string")
+
 
 if __name__ == "__main__":
     unittest.main()
