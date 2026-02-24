@@ -50,6 +50,25 @@ class CaptureApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body["detail"], "invalid request payload")
 
+    def test_capture_validation_error_emits_structured_failure_log(self) -> None:
+        with self.assertLogs("autoapply.api", level="WARNING") as captured:
+            status, body = self._post_json(
+                "/api/v1/jobs/capture",
+                {
+                    "company": "Acme",
+                    "job_url": "https://www.linkedin.com/jobs/view/123",
+                    "description_raw": "Build APIs",
+                    "captured_at": "2026-02-21T10:00:00Z",
+                },
+            )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(body["detail"], "invalid request payload")
+        entries = "\n".join(captured.output)
+        self.assertIn('"event":"request.failed"', entries)
+        self.assertIn('"error_class":"bad_request"', entries)
+        self.assertIn('"request_id":"', entries)
+
     def test_capture_success_persists_application_and_job_posting(self) -> None:
         payload = {
             "title": "Backend Engineer",
