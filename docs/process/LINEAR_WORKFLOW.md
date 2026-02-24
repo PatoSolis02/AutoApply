@@ -143,3 +143,31 @@ Every two sprints:
 2. Update this document with process changes.
 
 3. Record improvements as explicit backlog items in `ROADMAP_BACKLOG.md`.
+
+## Live Workspace Snapshot
+
+Initialized on: 2026-02-24
+
+- Team: `AutoApply` (`AUT`)
+- Project: `AutoApply`
+- Project URL: `https://linear.app/autoapplyps/project/autoapply-98ed9b02fe28`
+
+Implemented setup from repo docs:
+
+1. Sprint 05 historical issues created and marked `Done`:
+- `AUT-5` through `AUT-10`
+- Includes dependency chain:
+  - `AUT-9` blocked by `AUT-5`, `AUT-6`, `AUT-7`, `AUT-8`
+  - `AUT-10` blocked by `AUT-9`
+
+2. Backlog queue created from `docs/process/ROADMAP_BACKLOG.md`:
+- `AUT-11` through `AUT-20`
+- Status set to `Backlog` for future sprint-batch selection.
+
+3. Label set created for this workflow:
+- `sprint-05`, `quality`, `llm`, `capture`, `ux`, `parser`, `integration`, `retrospective`, `cleanup`
+- Default Linear labels retained: `Feature`, `Bug`, `Improvement`
+
+Cycle note:
+- MCP currently exposes cycle listing, but not cycle creation in this workflow.
+- Use sprint labels (`sprint-XX`) + project/milestones as the sprint grouping mechanism until cycle creation is automated.
