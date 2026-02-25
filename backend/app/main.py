@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from .db import CaptureDatabase, DbComplianceError, DbConflictError, DbNotFoundError
+from .fit_scoring import FitScoringEngine
 from .ingest import build_structured_job_posting
 from .resume_ingest import (
     ResumeParseError,
@@ -160,6 +161,7 @@ def _build_handler(capture_db: CaptureDatabase):
         artifact_writer=ArtifactWriter(Path(__file__).resolve().parents[2]),
         compliance_gate=ComplianceGate(),
     )
+    fit_scoring_engine = FitScoringEngine()
 
     class CaptureRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -346,11 +348,16 @@ def _build_handler(capture_db: CaptureDatabase):
                 page=page,
                 page_size=page_size,
             )
+            fit_profile = self._load_profile_for_fit()
+            enriched_items = [
+                self._enrich_application_fit(item, fit_profile, include_analysis=False)
+                for item in items
+            ]
             _json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    "items": items,
+                    "items": enriched_items,
                     "page": page,
                     "page_size": page_size,
                     "total": total,
@@ -364,12 +371,14 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
 
+            fit_profile = self._load_profile_for_fit()
+            enriched = self._enrich_application_fit(application, fit_profile, include_analysis=True)
             latest = capture_db.get_latest_resume_version(application_id)
             _json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    **application,
+                    **enriched,
                     "latest_resume_version": latest,
                 },
             )
@@ -487,12 +496,13 @@ def _build_handler(capture_db: CaptureDatabase):
             returned_versions = len(resume_versions)
             consumed_versions = min(total_versions, offset + returned_versions)
             remaining_versions = max(total_versions - consumed_versions, 0)
-
+            fit_profile = self._load_profile_for_fit()
+            enriched = self._enrich_application_fit(application, fit_profile, include_analysis=True)
             _json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    "application": application,
+                    "application": enriched,
                     "job_posting": job_posting,
                     "resume_versions": resume_versions,
                     "resume_versions_page": {
@@ -659,6 +669,68 @@ def _build_handler(capture_db: CaptureDatabase):
                 self._invalid_request_field("profile_id", "must be a non-empty string")
                 return None
             return profile_id
+
+        def _load_profile_for_fit(self) -> dict[str, Any] | None:
+            try:
+                return capture_db.get_user_profile()
+            except DbNotFoundError:
+                return None
+
+        def _enrich_application_fit(
+            self,
+            application: dict[str, Any],
+            fit_profile: dict[str, Any] | None,
+            *,
+            include_analysis: bool,
+        ) -> dict[str, Any]:
+            application_id = str(application.get("id", ""))
+            if not application_id:
+                return dict(application)
+
+            try:
+                job_posting = capture_db.get_job_posting_for_application(application_id)
+            except DbNotFoundError:
+                if not include_analysis:
+                    return dict(application)
+                return {
+                    **application,
+                    "fit_analysis": {
+                        "score": application.get("fit_score"),
+                        "coverage": {
+                            "requirements": {"matched": 0, "total": 0, "ratio": 1.0},
+                            "preferred": {"matched": 0, "total": 0, "ratio": 1.0},
+                            "keywords": {"matched": 0, "total": 0, "ratio": 1.0},
+                        },
+                        "matched_requirements": [],
+                        "missing_requirements": [],
+                        "matched_preferred": [],
+                        "missing_preferred": [],
+                        "matched_keywords": [],
+                        "missing_keywords": [],
+                        "gaps": [
+                            {
+                                "category": "job_posting",
+                                "item": "Structured job data",
+                                "severity": "high",
+                                "reason": "Cannot score fit because job posting data is unavailable.",
+                            }
+                        ],
+                        "notes": ["Structured job posting data is required for fit scoring."],
+                    },
+                }
+
+            fit_analysis = fit_scoring_engine.evaluate(profile=fit_profile, job_posting=job_posting)
+            fit_score = fit_analysis.get("score")
+            if fit_score is None:
+                fit_score = application.get("fit_score")
+
+            enriched = {
+                **application,
+                "fit_score": fit_score,
+            }
+            if include_analysis:
+                enriched["fit_analysis"] = fit_analysis
+            return enriched
 
         def _begin_request(self, method: str) -> None:
             parsed = urlparse(self.path)

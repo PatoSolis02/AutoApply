@@ -41,7 +41,13 @@ class TrackingApiTests(unittest.TestCase):
         conn.close()
         return response.status, json.loads(body_text)
 
-    def _capture_application(self, *, company: str = "Acme", title: str = "Backend Engineer") -> str:
+    def _capture_application(
+        self,
+        *,
+        company: str = "Acme",
+        title: str = "Backend Engineer",
+        description_raw: str = "Build API services with Python and SQL.",
+    ) -> str:
         status, body = self._request_json(
             "POST",
             "/api/v1/jobs/capture",
@@ -50,7 +56,7 @@ class TrackingApiTests(unittest.TestCase):
                 "company": company,
                 "location": "Rochester, NY",
                 "job_url": "https://www.linkedin.com/jobs/view/123",
-                "description_raw": "Build API services with Python and SQL.",
+                "description_raw": description_raw,
                 "captured_at": "2026-02-21T10:00:00Z",
             },
         )
@@ -112,6 +118,68 @@ class TrackingApiTests(unittest.TestCase):
         self.assertEqual(body["id"], application_id)
         self.assertEqual(body["latest_resume_version"]["id"], second_id)
         self.assertNotEqual(first_id, second_id)
+
+    def test_get_application_includes_deterministic_fit_analysis(self) -> None:
+        application_id = self._capture_application(
+            description_raw=(
+                "Senior Backend Engineer role.\n"
+                "Requirements: 5+ years Python.\n"
+                "Requirements: Experience with SQL databases.\n"
+                "Requirements: REST API design.\n"
+                "Preferred: Experience with AWS.\n"
+                "Responsibilities: Build API services.\n"
+            )
+        )
+
+        status, _ = self._request_json(
+            "PUT",
+            "/api/v1/profile",
+            {
+                "id": "primary",
+                "full_name": "Taylor Dev",
+                "headline": "Backend Engineer",
+                "summary": "Builds API systems with Python and SQL.",
+                "skills": ["Python", "SQL", "FastAPI", "Observability"],
+                "experiences": [
+                    {
+                        "id": "exp-1",
+                        "company": "DataCo",
+                        "title": "Engineer",
+                        "bullets": ["Built API services with Python and SQL."],
+                        "skills": ["Python", "SQL"],
+                    }
+                ],
+                "projects": [],
+                "education": [],
+            },
+        )
+        self.assertEqual(status, 200)
+
+        first_status, first = self._request_json("GET", f"/api/v1/applications/{application_id}")
+        second_status, second = self._request_json("GET", f"/api/v1/applications/{application_id}")
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+
+        self.assertIsInstance(first["fit_score"], float)
+        self.assertEqual(first["fit_analysis"], second["fit_analysis"])
+        self.assertEqual(first["fit_score"], second["fit_score"])
+        self.assertIn("missing_requirements", first["fit_analysis"])
+        self.assertGreater(len(first["fit_analysis"]["gaps"]), 0)
+
+    def test_get_application_fit_analysis_reports_profile_gap_when_profile_missing(self) -> None:
+        application_id = self._capture_application(
+            description_raw=(
+                "Backend role.\n"
+                "Requirements: Experience with SQL databases.\n"
+                "Requirements: REST API design.\n"
+            )
+        )
+
+        status, body = self._request_json("GET", f"/api/v1/applications/{application_id}")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["fit_score"])
+        self.assertIsNone(body["fit_analysis"]["score"])
+        self.assertEqual(body["fit_analysis"]["gaps"][0]["category"], "profile")
 
     def test_patch_status_enforces_transition_and_approval_gate(self) -> None:
         application_id = self._capture_application()
