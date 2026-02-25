@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -26,6 +27,15 @@ class UserProfilePayload:
     projects: list[dict[str, Any]]
     skills: list[str]
     education: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class AuthCredentialsPayload:
+    email: str
+    password: str
+
+
+_AUTH_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 
@@ -139,6 +149,38 @@ def _optional_list_of_strings(payload: dict[str, Any], key: str, errors: list[di
     return [item.strip() for item in value if item.strip()]
 
 
+def _read_auth_credentials_payload(payload: object) -> Tuple[Optional[AuthCredentialsPayload], List[Dict[str, str]]]:
+    if not isinstance(payload, dict):
+        return None, [{"field": "body", "message": "must be a JSON object"}]
+
+    errors: list[dict[str, str]] = []
+
+    email_raw = payload.get("email")
+    if not isinstance(email_raw, str) or not email_raw.strip():
+        errors.append({"field": "email", "message": "is required"})
+        email = ""
+    else:
+        email = email_raw.strip().lower()
+        if _AUTH_EMAIL_PATTERN.fullmatch(email) is None:
+            errors.append({"field": "email", "message": "must be a valid email address"})
+
+    password = payload.get("password")
+    if not isinstance(password, str) or not password:
+        errors.append({"field": "password", "message": "is required"})
+        password_value = ""
+    else:
+        password_value = password
+        if len(password_value) < 8:
+            errors.append({"field": "password", "message": "must be at least 8 characters"})
+        if len(password_value) > 128:
+            errors.append({"field": "password", "message": "must be at most 128 characters"})
+
+    if errors:
+        return None, errors
+
+    return AuthCredentialsPayload(email=email, password=password_value), []
+
+
 def validate_user_profile_payload(payload: object) -> Tuple[Optional[UserProfilePayload], List[Dict[str, str]]]:
     if not isinstance(payload, dict):
         return None, [{"field": "body", "message": "must be a JSON object"}]
@@ -182,3 +224,11 @@ def validate_user_profile_payload(payload: object) -> Tuple[Optional[UserProfile
         ),
         [],
     )
+
+
+def validate_auth_signup_payload(payload: object) -> Tuple[Optional[AuthCredentialsPayload], List[Dict[str, str]]]:
+    return _read_auth_credentials_payload(payload)
+
+
+def validate_auth_login_payload(payload: object) -> Tuple[Optional[AuthCredentialsPayload], List[Dict[str, str]]]:
+    return _read_auth_credentials_payload(payload)
