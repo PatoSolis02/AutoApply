@@ -1,18 +1,21 @@
 # AutoApply Roadmap and Backlog
 
-Last updated: 2026-02-24
+Last updated: 2026-02-25
 Owner: Integration/Product thread
 
 ## Current Snapshot
 
-- Sprint 6 integrated on `codex/integration`.
+- Sprint 7 integrated on `codex/integration`.
 - Core flow remains operational: capture -> generate -> review -> approve -> ready_to_apply.
-- Reliability gains are now in place:
+- Reliability and generation gains now in place:
   - contract fallback hardening (`AUT-13`)
   - deterministic API workflow smoke tests in CI (`AUT-11`)
   - LLM-assisted parse normalization with deterministic fallback (`AUT-12`)
   - structured request observability with request IDs (`AUT-14`)
-- Remaining roadmap focus is generation quality expansion, technical debt cleanup, and advanced product features.
+  - LLM-based tailored resume generation with deterministic fallback (`AUT-15`)
+  - parser/runtime technical debt cleanup (`AUT-16`)
+  - sqlite runtime warning cleanup (`AUT-23`)
+- Remaining roadmap focus is advanced product features, packaging/release hardening, and low-risk cleanup.
 
 ## Priority Scale
 
@@ -53,21 +56,20 @@ Sprint 06:
 - `B-2` Contract mismatch and fallback hardening (`AUT-13`)
 - `C-1` Runtime/API observability and diagnosability (`AUT-14`)
 
+Sprint 07:
+
+- `F-3` LLM-based tailored resume generation (`AUT-15`)
+- `C-2` Cleanup technical debt in parser/test/runtime plumbing (`AUT-16`)
+- `C-5` Test runtime resource warning cleanup (`AUT-23`)
+
 ## Ordered Active Task Queue (Execution Order)
 
-1. `F-3` LLM-based tailored resume generation using job content + profile (`AUT-15`) - Priority `2`
-2. `C-2` Cleanup technical debt in parser/test/runtime plumbing (`AUT-16`) - Priority `3`
-3. `C-5` Test runtime resource warning cleanup (`AUT-23`) - Priority `3`
-4. `F-4` Advanced audit export for larger histories (`AUT-17`) - Priority `4`
-5. `F-5` Fit scoring phase execution (`AUT-18`) - Priority `4`
-6. `C-3` Packaging and release documentation hardening (`AUT-19`) - Priority `4`
-7. `C-4` Non-critical refactor/polish cleanup (`AUT-20`) - Priority `5`
+1. `F-4` Advanced audit export for larger histories (`AUT-17`) - Priority `4`
+2. `F-5` Fit scoring phase execution (`AUT-18`) - Priority `4`
+3. `C-3` Packaging and release documentation hardening (`AUT-19`) - Priority `4`
+4. `C-4` Non-critical refactor/polish cleanup (`AUT-20`) - Priority `5`
 
 ## Feature Work
-
-- `F-3` LLM-driven resume tailoring generation - Priority `2`
-- Scope: generate resumes from job content + user profile with safety/compliance gates intact.
-- Exit criteria: reliable generation quality with claims mapping enforced and stable approval flow.
 
 - `F-4` Advanced audit export - Priority `4`
 - Scope: large-history handling (pagination/chunking/stream/file export path).
@@ -79,10 +81,6 @@ Sprint 06:
 
 ## Cleanup and Technical Debt
 
-- `C-2` Codebase cleanup and simplification - Priority `3`
-- Scope: remove brittle parser/runtime plumbing paths and improve traceability.
-- Exit criteria: reduced complexity with behavior preserved and test coverage maintained.
-
 - `C-3` Release/packaging docs cleanup - Priority `4`
 - Scope: operational docs for extension/app packaging and repeatable release steps.
 - Exit criteria: reproducible release runbook validated against current workflow.
@@ -90,10 +88,6 @@ Sprint 06:
 - `C-4` Low-impact refactors - Priority `5`
 - Scope: naming consistency, minor reorganizations, non-behavioral cleanup.
 - Exit criteria: readability improvements with no functional change.
-
-- `C-5` Test runtime resource warning cleanup - Priority `3`
-- Scope: eliminate recurring sqlite `ResourceWarning` noise in test/runtime flows.
-- Exit criteria: targeted test suites run without repeated resource warning spam and no behavior regression.
 
 ## Parallelization Policy (No Overlap)
 
@@ -112,20 +106,17 @@ Parallel assignment rules:
 
 Recommended active split for current queue:
 
-1. Thread A: LLM generation feature lane
-- `F-3`
+1. Thread A: advanced audit export lane
+- `F-4`
 
-2. Thread B: parser/runtime cleanup lane
-- `C-2`
+2. Thread B: fit scoring lane
+- `F-5`
 
-3. Thread C: runtime hygiene lane
-- `C-5`
+3. Thread C: operations/docs release lane
+- `C-3`
 
-4. Thread D: advanced product lane
-- `F-4`, `F-5`
-
-5. Thread E: operations/docs cleanup lane
-- `C-3`, `C-4`
+4. Thread D: polish cleanup lane (optional, capacity permitting)
+- `C-4`
 
 ## Sprint Structure Recommendation (Thread-Batch Model)
 

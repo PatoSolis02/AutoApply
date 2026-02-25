@@ -28,7 +28,7 @@ Date initialized: 2026-02-24
 - Blocked by: `AUT-15`, `AUT-16`, `AUT-23`
 
 2. `AUT-25` Sprint 07 recap and backlog rerank
-- Status: `Todo`
+- Status: `Done`
 - Blocked by: `AUT-24`
 
 ## Status Flow for This Sprint
@@ -55,6 +55,7 @@ Verification:
 - `npm test` -> PASS (`8 files, 29 tests`)
 - `npm run build` -> PASS
 
-Next tracking issue:
+Recap artifacts:
 
-- `AUT-25` remains `Todo` for sprint recap/backlog rerank.
+- `sprints/sprint-07/SPRINT_LOG.md`
+- `sprints/sprint-07/RETROSPECTIVE.md`
