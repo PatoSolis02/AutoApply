@@ -11,6 +11,39 @@ function textFromSelectors(selectors, root = document) {
   return null;
 }
 
+function readDataAttribute(el, name) {
+  if (!el || typeof el.getAttribute !== "function") return "";
+  return compact(el.getAttribute(name) || "");
+}
+
+function extractJobIdFromUrlLike(value) {
+  if (value === null || value === undefined) return "";
+  const raw = compact(String(value));
+  if (!raw) return "";
+  if (/^\d{4,}$/.test(raw)) return raw;
+
+  const fromPath = raw.match(/\/jobs\/view\/(\d{4,})/i);
+  if (fromPath?.[1]) {
+    return fromPath[1];
+  }
+
+  const fromQuery = raw.match(/[?&]currentJobId=(\d{4,})\b/i);
+  if (fromQuery?.[1]) {
+    return fromQuery[1];
+  }
+
+  const fromUrn = raw.match(/jobPosting:(\d{4,})/i);
+  if (fromUrn?.[1]) {
+    return fromUrn[1];
+  }
+
+  return "";
+}
+
+function canonicalLinkedInJobUrl(jobId) {
+  return jobId ? `https://www.linkedin.com/jobs/view/${jobId}` : "";
+}
+
 function findActiveJobCard() {
   return document.querySelector(".jobs-search-results__list-item--active")
     || document.querySelector(".jobs-search-results-list__list-item--active")
@@ -20,10 +53,23 @@ function findActiveJobCard() {
 
 function activeCardJobUrl(activeCard) {
   if (!activeCard) return "";
-  const link = activeCard.querySelector("a[href*='/jobs/view/']");
+  const link = activeCard.querySelector("a[href*='/jobs/']");
   if (!link) return "";
   const href = link.getAttribute("href");
   if (!href) return "";
+
+  const fromHrefId = extractJobIdFromUrlLike(href);
+  if (fromHrefId) {
+    if (/\/jobs\/view\//i.test(href)) {
+      try {
+        return new URL(href, window.location.origin).href;
+      } catch (_error) {
+        return canonicalLinkedInJobUrl(fromHrefId);
+      }
+    }
+    return canonicalLinkedInJobUrl(fromHrefId);
+  }
+
   try {
     return new URL(href, window.location.origin).href;
   } catch (_error) {
@@ -31,17 +77,47 @@ function activeCardJobUrl(activeCard) {
   }
 }
 
-function canonicalJobUrl(activeCard = null) {
-  const url = new URL(window.location.href);
-  const currentJobId = url.searchParams.get("currentJobId");
-  if (currentJobId) {
-    return `https://www.linkedin.com/jobs/view/${currentJobId}`;
+function activeCardJobId(activeCard) {
+  if (!activeCard) return "";
+
+  const dataCandidates = [
+    readDataAttribute(activeCard, "data-occludable-job-id"),
+    readDataAttribute(activeCard, "data-job-id"),
+    readDataAttribute(activeCard, "data-id"),
+    readDataAttribute(activeCard, "data-entity-urn"),
+  ];
+  for (const candidate of dataCandidates) {
+    const id = extractJobIdFromUrlLike(candidate);
+    if (id) return id;
   }
+
+  const anchor = activeCard.querySelector("a[href*='/jobs/']");
+  const href = compact(anchor?.getAttribute("href") || "");
+  return extractJobIdFromUrlLike(href);
+}
+
+function canonicalJobUrl(activeCard = null, jsonLdJobUrl = "") {
+  const fromCurrentUrl = extractJobIdFromUrlLike(window.location.href);
+  if (fromCurrentUrl) {
+    return canonicalLinkedInJobUrl(fromCurrentUrl);
+  }
+
+  const fromActiveCardId = activeCardJobId(activeCard);
+  if (fromActiveCardId) {
+    return canonicalLinkedInJobUrl(fromActiveCardId);
+  }
+
   const fromCard = activeCardJobUrl(activeCard);
-  if (fromCard && !/\/jobs\/view\//i.test(url.pathname)) {
+  if (fromCard) {
     return fromCard;
   }
-  return url.href;
+
+  const fromJsonLd = extractJobIdFromUrlLike(jsonLdJobUrl);
+  if (fromJsonLd) {
+    return canonicalLinkedInJobUrl(fromJsonLd);
+  }
+
+  return window.location.href;
 }
 
 function compact(text) {
@@ -57,9 +133,10 @@ function sanitizeCompanyName(value) {
   return candidate;
 }
 
-function fallbackTitleFromDocumentTitle() {
-  const cleaned = compact(document.title.replace(/\s*\|\s*LinkedIn\s*$/i, ""));
+function titleFromCandidate(value) {
+  const cleaned = compact((value || "").replace(/\s*\|\s*LinkedIn\s*$/i, ""));
   if (!cleaned) return "";
+  if (/^linkedin$/i.test(cleaned)) return "";
 
   const atMatch = cleaned.match(/^(.*?)\s+at\s+.+$/i);
   if (atMatch?.[1]) {
@@ -72,6 +149,19 @@ function fallbackTitleFromDocumentTitle() {
   }
 
   return cleaned;
+}
+
+function fallbackTitleFromDocumentTitle() {
+  return titleFromCandidate(document.title);
+}
+
+function fallbackTitleFromMeta() {
+  const metaTitle = compact(
+    document.querySelector("meta[property='og:title']")?.getAttribute("content")
+      || document.querySelector("meta[name='title']")?.getAttribute("content")
+      || ""
+  );
+  return titleFromCandidate(metaTitle);
 }
 
 function fallbackCompanyFromDocumentTitle() {
@@ -145,9 +235,124 @@ function findJobPostingNode(node) {
   return null;
 }
 
+function collectJobPostingNodes(node, into = []) {
+  if (!node) return into;
+  if (Array.isArray(node)) {
+    for (const entry of node) {
+      collectJobPostingNodes(entry, into);
+    }
+    return into;
+  }
+  if (typeof node !== "object") return into;
+  if (isJobPostingType(node["@type"])) {
+    into.push(node);
+  }
+  if (Array.isArray(node["@graph"])) {
+    collectJobPostingNodes(node["@graph"], into);
+  }
+  return into;
+}
+
+function companyFromJsonLdPosting(posting) {
+  const organization = posting?.hiringOrganization;
+  const candidates = [];
+
+  if (typeof organization === "string") {
+    candidates.push(organization);
+  } else if (Array.isArray(organization)) {
+    for (const item of organization) {
+      if (typeof item === "string") {
+        candidates.push(item);
+      } else if (item && typeof item === "object") {
+        candidates.push(item.name, item.legalName);
+      }
+    }
+  } else if (organization && typeof organization === "object") {
+    candidates.push(organization.name, organization.legalName);
+  }
+
+  candidates.push(posting?.employerOverview?.name);
+
+  for (const candidate of candidates) {
+    const company = sanitizeCompanyName(candidate);
+    if (company) return company;
+  }
+
+  return "";
+}
+
+function locationFromJsonLdPosting(posting) {
+  const locationNodes = Array.isArray(posting?.jobLocation)
+    ? posting.jobLocation
+    : posting?.jobLocation
+      ? [posting.jobLocation]
+      : [];
+
+  for (const node of locationNodes) {
+    if (!node || typeof node !== "object") continue;
+    const address = node.address && typeof node.address === "object" ? node.address : node;
+    const locality = compact(address.addressLocality || "");
+    const region = compact(address.addressRegion || "");
+    const country = compact(address.addressCountry || "");
+
+    const withRegion = [locality, region].filter(Boolean).join(", ");
+    if (looksLikeLocation(withRegion)) return withRegion;
+    if (looksLikeLocation(locality)) return locality;
+    if (looksLikeLocation(country)) return country;
+  }
+
+  const remoteHint = compact(posting?.jobLocationType || posting?.workLocationRequirements || "");
+  if (/telecommute|remote/i.test(remoteHint)) {
+    return "Remote";
+  }
+
+  return "";
+}
+
+function descriptionFromJsonLdPosting(posting) {
+  return htmlToText(posting?.description || posting?.jobDescription || "");
+}
+
+function titleFromJsonLdPosting(posting) {
+  return compact(posting?.title || posting?.name || "");
+}
+
+function identifierFromJsonLdPosting(posting) {
+  const identifier = posting?.identifier;
+  if (typeof identifier === "string") {
+    return extractJobIdFromUrlLike(identifier);
+  }
+  if (identifier && typeof identifier === "object") {
+    return extractJobIdFromUrlLike(identifier.value || identifier.name || "");
+  }
+  return "";
+}
+
+function scoreJsonLdPosting(posting, currentJobId) {
+  const jobId = identifierFromJsonLdPosting(posting) || extractJobIdFromUrlLike(posting?.url || posting?.mainEntityOfPage || "");
+  const company = companyFromJsonLdPosting(posting);
+  const title = titleFromJsonLdPosting(posting);
+  const description = descriptionFromJsonLdPosting(posting);
+
+  let score = 0;
+  if (currentJobId && jobId && currentJobId === jobId) {
+    score += 100;
+  }
+  if (description.length >= 80) {
+    score += 10;
+  } else if (description.length >= 40) {
+    score += 5;
+  }
+  if (company) score += 3;
+  if (title) score += 2;
+  if (jobId) score += 1;
+  return score;
+}
+
 function extractFromJsonLd() {
   const scripts = Array.from(document.querySelectorAll("script[type='application/ld+json']"));
-  const best = { company: "", description: "" };
+  const currentJobId = extractJobIdFromUrlLike(window.location.href);
+  const best = { title: "", company: "", description: "", location: "", job_url: "", score: -1 };
 
   for (const script of scripts) {
     const raw = script.textContent;
@@ -155,29 +360,36 @@ function extractFromJsonLd() {
 
     try {
       const parsed = JSON.parse(raw);
-      const posting = findJobPostingNode(parsed);
-      if (!posting) continue;
-
-      const company =
-        sanitizeCompanyName(posting?.hiringOrganization?.name)
-        || sanitizeCompanyName(posting?.hiringOrganization?.legalName)
-        || sanitizeCompanyName(posting?.employerOverview?.name)
-        || "";
-
-      const description = htmlToText(posting?.description || posting?.jobDescription || "");
-
-      if (company && !best.company) {
-        best.company = company;
+      const postings = collectJobPostingNodes(parsed);
+      if (postings.length === 0) {
+        const one = findJobPostingNode(parsed);
+        if (one) postings.push(one);
       }
-      if (description && description.length > best.description.length) {
-        best.description = description;
+      if (postings.length === 0) continue;
+
+      for (const posting of postings) {
+        const score = scoreJsonLdPosting(posting, currentJobId);
+        if (score < best.score) continue;
+
+        best.title = titleFromJsonLdPosting(posting);
+        best.company = companyFromJsonLdPosting(posting);
+        best.description = descriptionFromJsonLdPosting(posting);
+        best.location = locationFromJsonLdPosting(posting);
+        best.job_url = compact(posting?.url || posting?.mainEntityOfPage || "");
+        best.score = score;
       }
     } catch (_error) {
       continue;
     }
   }
 
-  return best;
+  return {
+    title: best.title,
+    company: best.company,
+    description: best.description,
+    location: best.location,
+    job_url: best.job_url,
+  };
 }
 
 function fallbackCompanyFromTopCard(knownTitle = "") {
@@ -267,6 +479,7 @@ function locationFromTopCard(company = "") {
     ".job-details-jobs-unified-top-card__primary-description-container span",
     ".jobs-unified-top-card__bullet",
     ".jobs-unified-top-card__subtitle-primary-grouping span",
+    ".jobs-unified-top-card__primary-description-without-tagline",
     ".jobs-unified-top-card__primary-description span",
     ".jobs-unified-top-card__primary-description",
   ];
@@ -275,10 +488,16 @@ function locationFromTopCard(company = "") {
     for (const match of matches) {
       const value = compact(match.textContent || "");
       if (!value) continue;
-      if (company && value.toLowerCase() === company.toLowerCase()) continue;
-      if (looksLikeJobMeta(value)) continue;
-      if (!looksLikeLocation(value)) continue;
-      return value;
+      const segments = value.includes("·")
+        ? value.split("·").map((segment) => compact(segment)).filter(Boolean)
+        : [value];
+      for (const segment of segments) {
+        if (!segment) continue;
+        if (company && segment.toLowerCase() === company.toLowerCase()) continue;
+        if (looksLikeJobMeta(segment)) continue;
+        if (!looksLikeLocation(segment)) continue;
+        return segment;
+      }
     }
   }
   return "";
@@ -292,7 +511,7 @@ function fallbackDescriptionFromActiveCard(activeCard) {
     ".job-card-container__description",
     "[class*='job-card-list__description']",
   ], activeCard);
-  if (direct && direct.length >= 40) {
+  if (direct && direct.length >= 20) {
     return direct;
   }
 
@@ -303,7 +522,7 @@ function fallbackDescriptionFromActiveCard(activeCard) {
     return "";
   }
   const combined = compact(insightNodes.map((node) => readText(node)).filter(Boolean).join(" "));
-  return combined.length >= 60 ? combined : "";
+  return combined.length >= 40 ? combined : "";
 }
 
 function fallbackDescriptionFromPanel() {
@@ -322,7 +541,7 @@ function fallbackDescriptionFromPanel() {
     "[class*='show-more-less-html__markup']",
     "[class*='jobs-description-content']",
   ]);
-  if (targeted && targeted.length >= 60) {
+  if (targeted && targeted.length >= 40) {
     return targeted;
   }
 
@@ -336,13 +555,13 @@ function fallbackDescriptionFromPanel() {
     const index = lowered.indexOf(anchor);
     if (index >= 0) {
       const candidate = compact(text.slice(index));
-      if (candidate.length >= 60) {
+      if (candidate.length >= 40) {
         return candidate;
       }
     }
   }
 
-  return text.length >= 120 ? text : "";
+  return text.length >= 80 ? text : "";
 }
 
 function fallbackDescriptionFromMeta() {
@@ -361,7 +580,7 @@ function fallbackDescriptionFromMeta() {
   }
   if (!content) return "";
   const asText = htmlToText(content);
-  return asText.length >= 40 ? asText : "";
+  return asText.length >= 25 ? asText : "";
 }
 
 function fallbackDescriptionFromPage() {
@@ -382,7 +601,7 @@ function fallbackDescriptionFromPage() {
     return compact(text.slice(descriptionIndex, Math.min(text.length, descriptionIndex + 5000)));
   }
 
-  return text.length >= 120 ? text.slice(0, 3000) : "";
+  return text.length >= 80 ? text.slice(0, 3000) : "";
 }
 
 function extractJobDetails() {
@@ -396,7 +615,7 @@ function extractJobDetails() {
     ".jobs-unified-top-card__job-title",
     "[data-test-job-title]",
     "h1"
-  ]) || fallbackTitleFromActiveCard(activeCard) || fallbackTitleFromDocumentTitle();
+  ]) || fallbackTitleFromActiveCard(activeCard) || fallbackTitleFromDocumentTitle() || fallbackTitleFromMeta() || jsonLd.title;
 
   const company = textFromSelectors([
     ".job-details-jobs-unified-top-card__company-name a",
@@ -423,6 +642,7 @@ function extractJobDetails() {
   const location =
     locationFromTopCard(normalizedCompany)
     || fallbackLocationFromActiveCard(activeCard, normalizedCompany)
+    || jsonLd.location
     || null;
 
   const descriptionNode = document.querySelector("#job-details")
@@ -441,7 +661,7 @@ function extractJobDetails() {
     title,
     company: normalizedCompany,
     location,
-    job_url: canonicalJobUrl(activeCard),
+    job_url: canonicalJobUrl(activeCard, jsonLd.job_url),
     description_raw:
       descriptionRaw
       || jsonLd.description
@@ -459,6 +679,29 @@ function missingFields(data) {
   if (!data.description_raw) missing.push("description");
   if (!data.job_url) missing.push("job_url");
   return missing;
+}
+
+function recoveryGuidanceForField(field) {
+  if (field === "title") {
+    return "click the target role so the right-side detail panel shows the job title";
+  }
+  if (field === "company") {
+    return "wait for company metadata near the title or open the company-linked posting view";
+  }
+  if (field === "description") {
+    return "scroll/expand the description section (About the job) before capturing";
+  }
+  if (field === "job_url") {
+    return "open a specific LinkedIn job detail (jobs/view) before retrying";
+  }
+  return "refresh the page and retry";
+}
+
+function buildMissingFieldError(missing) {
+  const detail = missing
+    .map((field) => `${field}: ${recoveryGuidanceForField(field)}`)
+    .join(" | ");
+  return `Could not extract required fields (${missing.join(", ")}). Recovery: ${detail}. If this keeps failing, use AutoApply manual capture form with copied job details.`;
 }
 
 function wait(ms) {
@@ -484,11 +727,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return;
   }
 
-  extractJobDetailsWithWait().then(({ data, missing }) => {
+  const timeoutMs =
+    typeof message?.timeoutMs === "number" && Number.isFinite(message.timeoutMs)
+      ? Math.max(0, message.timeoutMs)
+      : 9000;
+  const intervalMs =
+    typeof message?.intervalMs === "number" && Number.isFinite(message.intervalMs)
+      ? Math.max(10, message.intervalMs)
+      : 300;
+
+  extractJobDetailsWithWait(timeoutMs, intervalMs).then(({ data, missing }) => {
     if (missing.length > 0) {
       sendResponse({
         ok: false,
-        error: `Could not extract required fields (${missing.join(", ")}). Open a specific job detail in the right panel and try again.`
+        error: buildMissingFieldError(missing)
       });
       return;
     }

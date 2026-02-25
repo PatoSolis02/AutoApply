@@ -6,6 +6,31 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? "#a40000" : "#1b5e20";
 }
 
+function fieldRecoveryHint(field) {
+  if (field === "title") return "confirm role title is visible.";
+  if (field === "company") return "confirm company metadata is loaded.";
+  if (field === "job_url") return "open a specific LinkedIn jobs/view page.";
+  if (field === "description_raw") return "expand the job description before capture.";
+  return "review the field and retry.";
+}
+
+function formatApiCaptureError(result, status) {
+  if (Array.isArray(result?.errors) && result.errors.length > 0) {
+    const detail = result.errors
+      .map((entry) => {
+        const field = typeof entry?.field === "string" ? entry.field : "";
+        return field ? `${field}: ${fieldRecoveryHint(field)}` : "";
+      })
+      .filter(Boolean)
+      .join(" ");
+    if (detail) {
+      return `Capture payload invalid. Recovery: ${detail} If needed, use the AutoApply manual capture form.`;
+    }
+  }
+
+  return result?.detail || `Capture failed (${status}).`;
+}
+
 function queryActiveTab() {
   return new Promise((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -101,7 +126,7 @@ async function captureCurrentJob() {
 
     const result = await response.json().catch(() => ({}));
     if (!response.ok) {
-      setStatus(result?.detail || `Capture failed (${response.status}).`, true);
+      setStatus(formatApiCaptureError(result, response.status), true);
       return;
     }
 

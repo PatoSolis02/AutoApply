@@ -81,4 +81,29 @@ describe('CapturePage', () => {
       expect(screen.getByText(/missing or invalid/i)).toBeInTheDocument();
     });
   });
+
+  it('surfaces field-level recovery guidance for structured capture validation errors', async () => {
+    captureJobMock.mockRejectedValueOnce(
+      new api.ApiError(400, 'invalid request payload', {
+        detail: 'invalid request payload',
+        errors: [
+          { field: 'job_url', message: 'must be a valid URL' },
+          { field: 'description_raw', message: 'is required' },
+        ],
+      }),
+    );
+    renderCaptureRoute();
+
+    fireEvent.change(screen.getByLabelText('Role Title'), { target: { value: 'Backend Engineer' } });
+    fireEvent.change(screen.getByLabelText('Company'), { target: { value: 'Acme' } });
+    fireEvent.change(screen.getByLabelText('Job URL'), { target: { value: 'https://example.com/jobs/1' } });
+    fireEvent.change(screen.getByLabelText('Raw Description'), { target: { value: 'Build APIs and services.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Capture Application' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/recovery:/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/job URL: paste the full job posting URL/i)).toBeInTheDocument();
+    expect(screen.getByText(/description: paste the responsibilities\/requirements/i)).toBeInTheDocument();
+  });
 });
