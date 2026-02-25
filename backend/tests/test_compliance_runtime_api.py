@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import unittest
+from contextlib import closing
 from http.client import HTTPConnection
 
 from app.main import create_server
@@ -61,7 +62,7 @@ class ComplianceRuntimeApiTests(unittest.TestCase):
         return payload["application_id"], payload["job_posting_id"]
 
     def _seed_profile(self, full_name: str = "Taylor Dev") -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO user_profiles (
@@ -188,7 +189,7 @@ class ComplianceRuntimeApiTests(unittest.TestCase):
     def test_approve_returns_422_for_rejected_claim_version(self) -> None:
         application_id, _ = self._capture_application()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO resume_versions (
