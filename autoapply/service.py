@@ -336,6 +336,7 @@ class ResumeGenerationService:
     ) -> dict[str, tuple[str, str, str]]:
         index: dict[str, tuple[str, str, str]] = {}
         section_source_map = (
+            ("education", "education"),
             ("experience", "experience"),
             ("projects", "project"),
         )
@@ -370,6 +371,7 @@ class ResumeGenerationService:
     ) -> list[ClaimMapEntry]:
         claims: list[ClaimMapEntry] = []
         section_source_map = (
+            ("education", "education"),
             ("experience", "experience"),
             ("projects", "project"),
         )

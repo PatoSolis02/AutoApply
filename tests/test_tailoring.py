@@ -16,8 +16,10 @@ class TailoringEngineTests(unittest.TestCase):
         second = engine.build_render_model(profile, posting)
 
         self.assertEqual(first, second)
+        self.assertEqual(list(first.sections.keys()), ["education", "experience", "projects"])
         self.assertEqual(first.selected_experience_ids[0], "exp-1")
         self.assertEqual(first.selected_project_ids[0], "proj-1")
+        self.assertEqual(first.sections["education"][0].entry_id, "edu-1")
 
     def test_selected_bullets_are_profile_backed(self) -> None:
         engine = TailoringEngine()
@@ -33,13 +35,19 @@ class TailoringEngineTests(unittest.TestCase):
 
         generated_bullets = {
             bullet.text
-            for section_name in ("experience", "projects")
+            for section_name in ("education", "experience", "projects")
             for section in model.sections[section_name]
+            for bullet in section.bullets
+        }
+        education_bullets = {
+            bullet.text
+            for section in model.sections["education"]
             for bullet in section.bullets
         }
 
         self.assertTrue(generated_bullets)
-        self.assertTrue(generated_bullets.issubset(source_bullets))
+        self.assertTrue(generated_bullets.difference(education_bullets).issubset(source_bullets))
+        self.assertTrue(any("RIT" in bullet for bullet in education_bullets))
 
 
 if __name__ == "__main__":

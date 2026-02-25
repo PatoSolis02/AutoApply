@@ -8,6 +8,10 @@ from pathlib import Path
 from autoapply.artifacts import ArtifactWriter
 from autoapply.compliance import ComplianceGate
 from autoapply.contracts import GenerateResumeRequest
+from autoapply.generation_format_contract import (
+    GENERATED_RESUME_FORMAT_BASELINE,
+    GENERATED_RESUME_FORMAT_CONTRACT_VERSION,
+)
 from autoapply.llm import LlmProviderError, LlmResponse, LlmRuntime, ProviderRegistry, load_llm_config
 from autoapply.repositories import InMemoryGenerateRepository
 from autoapply.service import ResumeGenerationService
@@ -84,6 +88,29 @@ class GenerationPipelineTests(unittest.TestCase):
             self.assertEqual(pdf_rel, "artifacts/resumes/app-1/ver-1.pdf")
             self.assertTrue(html_abs.exists())
             self.assertTrue(pdf_abs.exists())
+            html_content = html_abs.read_text(encoding="utf-8")
+            self.assertIn(
+                (
+                    "<meta name=\"autoapply-resume-format-contract\" "
+                    f"content=\"{GENERATED_RESUME_FORMAT_CONTRACT_VERSION}\">"
+                ),
+                html_content,
+            )
+            self.assertIn(
+                (
+                    "<meta name=\"autoapply-resume-format-baseline\" "
+                    f"content=\"{GENERATED_RESUME_FORMAT_BASELINE}\">"
+                ),
+                html_content,
+            )
+            education_pos = html_content.index("<h2>Education</h2>")
+            experience_pos = html_content.index("<h2>Work Experience</h2>")
+            projects_pos = html_content.index("<h2>Projects</h2>")
+            skills_pos = html_content.index("<h2>Skills</h2>")
+            self.assertLess(education_pos, experience_pos)
+            self.assertLess(experience_pos, projects_pos)
+            self.assertLess(projects_pos, skills_pos)
+
             first_pdf = pdf_abs.read_bytes()
 
             writer.write_resume_artifacts(
@@ -210,6 +237,31 @@ class GenerationLlmContractTests(unittest.TestCase):
             self.assertEqual(matching_claim.source_id, "exp-1")
             self.assertEqual(matching_claim.verification_status, "supported")
             self.assertFalse(version.approval.approved)
+
+    def test_generation_claims_include_education_source_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            profile = sample_user_profile()
+            app = sample_application()
+            posting = sample_job_posting(app.id)
+            repo = InMemoryGenerateRepository(
+                applications={app.id: app},
+                job_postings_by_app_id={app.id: posting},
+                user_profile=profile,
+            )
+            service = ResumeGenerationService(
+                repository=repo,
+                tailoring_engine=TailoringEngine(),
+                artifact_writer=ArtifactWriter(Path(tmpdir)),
+                compliance_gate=ComplianceGate(),
+            )
+
+            outcome = service.generate_resume_version(app.id, GenerateResumeRequest(template_id="modern"))
+            self.assertEqual(outcome.status_code, 201)
+
+            version = repo.get_resume_versions_for_application(app.id)[0]
+            education_claims = [claim for claim in version.claims_map if claim.source_type == "education"]
+            self.assertTrue(education_claims)
+            self.assertEqual(education_claims[0].source_id, "edu-1")
 
     def test_llm_provider_failure_falls_back_to_deterministic_generation_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -137,6 +137,7 @@ class SqliteGenerateRepository(GenerateRepository):
             selected_project_ids=[str(item) for item in _as_list(render_model_raw.get("selected_project_ids"))],
             selected_skill_keywords=[str(item) for item in _as_list(render_model_raw.get("selected_skill_keywords"))],
             sections={
+                "education": self._to_render_sections(sections_raw.get("education")),
                 "experience": self._to_render_sections(sections_raw.get("experience")),
                 "projects": self._to_render_sections(sections_raw.get("projects")),
             },

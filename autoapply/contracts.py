@@ -181,6 +181,13 @@ def render_model_to_json_dict(model: RenderModel) -> dict[str, Any]:
         "selected_project_ids": model.selected_project_ids,
         "selected_skill_keywords": model.selected_skill_keywords,
         "sections": {
+            "education": [
+                {
+                    "entry_id": entry.entry_id,
+                    "bullets": [{"id": bullet.id, "text": bullet.text} for bullet in entry.bullets],
+                }
+                for entry in model.sections.get("education", [])
+            ],
             "experience": [
                 {
                     "entry_id": entry.entry_id,
