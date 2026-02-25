@@ -91,6 +91,26 @@ class LlmRuntimeFallbackTests(unittest.TestCase):
         self.assertEqual(result.value["source"], "deterministic")
         self.assertEqual(result.metadata.reason, "provider_not_configured")
 
+    def test_runtime_uses_deterministic_when_provider_registry_has_no_client(self) -> None:
+        runtime = LlmRuntime(
+            load_llm_config(
+                {
+                    "AUTOAPPLY_LLM_ENABLED": "true",
+                    "AUTOAPPLY_LLM_PROVIDER": "openai",
+                    "AUTOAPPLY_OPENAI_API_KEY": "secret",
+                }
+            ),
+            provider_registry=ProviderRegistry(),
+        )
+        result = runtime.run_with_fallback(
+            workflow="resume_generate",
+            messages=[PromptMessage(role="user", content="test")],
+            llm_transform=lambda response: {"source": response.text},
+            deterministic_fn=lambda: {"source": "deterministic"},
+        )
+        self.assertEqual(result.value["source"], "deterministic")
+        self.assertEqual(result.metadata.reason, "provider_unavailable")
+
     def test_runtime_returns_llm_output_when_provider_succeeds(self) -> None:
         class _Client:
             provider = "openai"

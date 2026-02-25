@@ -514,6 +514,175 @@ class ResumeIngestTests(unittest.TestCase):
         self.assertEqual(parsed["profile"]["skills"], ["Python", "SQL", "AWS"])
         self.assertTrue(any(change["field"] == "full_name" for change in parsed["normalization"]["changes"]))
 
+    def test_parse_llm_normalization_keeps_required_fields_on_invalid_updates(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds reliable backend systems.",
+                "SKILLS",
+                "Python, SQL",
+                "EXPERIENCE",
+                "Backend Engineer | Acme Corp | Jan 2020 - Present",
+                "- Built Python APIs.",
+                "PROJECTS",
+                "AutoApply | Resume tool",
+                "- Built parser plumbing.",
+                "EDUCATION",
+                "RIT | BS Computer Science | 2015 - 2019",
+            ]
+        )
+        llm_response = {
+            "profile": {
+                "experiences": [
+                    {
+                        "company": "   ",
+                        "title": "",
+                        "start_date": "",
+                        "end_date": 100,
+                        "bullets": ["Updated bullet"],
+                        "skills": ["Python", "python"],
+                    }
+                ],
+                "projects": [
+                    {
+                        "name": "",
+                        "description": "",
+                        "url": 100,
+                        "bullets": ["Refined parser wiring"],
+                        "skills": ["TypeScript", "typescript"],
+                    }
+                ],
+                "education": [
+                    {
+                        "school": "",
+                        "degree": "",
+                        "field": 100,
+                        "start_date": 100,
+                        "end_date": 100,
+                    }
+                ],
+            }
+        }
+
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="primary",
+            llm_runtime=_build_llm_runtime_with_response(json.dumps(llm_response)),
+        )
+
+        experience = parsed["profile"]["experiences"][0]
+        self.assertEqual(experience["company"], "Acme Corp")
+        self.assertEqual(experience["title"], "Backend Engineer")
+        self.assertEqual(experience["start_date"], "2020-01-01")
+        self.assertIsNone(experience["end_date"])
+        self.assertEqual(experience["bullets"], ["Updated bullet"])
+        self.assertEqual(experience["skills"], ["Python"])
+
+        project = parsed["profile"]["projects"][0]
+        self.assertEqual(project["name"], "AutoApply")
+        self.assertEqual(project["description"], "Resume tool")
+        self.assertIsNone(project["url"])
+        self.assertEqual(project["bullets"], ["Refined parser wiring"])
+        self.assertEqual(project["skills"], ["TypeScript"])
+
+        education = parsed["profile"]["education"][0]
+        self.assertEqual(education["school"], "RIT")
+        self.assertEqual(education["degree"], "BS Computer Science")
+        self.assertEqual(education["start_date"], "2015-01-01")
+        self.assertEqual(education["end_date"], "2019-01-01")
+
+    def test_parse_llm_normalization_appends_new_entries_with_required_fields(self) -> None:
+        payload = _build_docx(
+            [
+                "Taylor Dev",
+                "Backend Engineer",
+                "SUMMARY",
+                "Builds reliable backend systems.",
+                "SKILLS",
+                "Python, SQL",
+                "EXPERIENCE",
+                "Backend Engineer | Acme Corp | Jan 2020 - Present",
+                "- Built Python APIs.",
+                "PROJECTS",
+                "AutoApply | Resume tool",
+                "- Built parser plumbing.",
+                "EDUCATION",
+                "RIT | BS Computer Science | 2015 - 2019",
+            ]
+        )
+        llm_response = {
+            "profile": {
+                "experiences": [
+                    {"company": "Acme Corp"},
+                    {
+                        "id": "exp-custom",
+                        "company": "Beta Labs",
+                        "title": "Platform Engineer",
+                        "start_date": "2022-01-01",
+                        "end_date": "2024-01-01",
+                        "bullets": ["Built runtime trace tooling."],
+                        "skills": ["Go", "go", "Python"],
+                    },
+                    {"company": "Missing Title"},
+                ],
+                "projects": [
+                    {"name": "AutoApply"},
+                    {
+                        "id": "proj-custom",
+                        "name": "Parser Monitor",
+                        "description": "Runtime diagnostics dashboard",
+                        "url": "https://example.com/monitor",
+                        "bullets": ["Added parser state snapshots."],
+                        "skills": ["React", "react", "TypeScript"],
+                    },
+                    {"description": "Missing project name"},
+                ],
+                "education": [
+                    {"school": "RIT"},
+                    {
+                        "id": "edu-custom",
+                        "school": "MIT",
+                        "degree": "MS Computer Science",
+                        "field": "AI",
+                        "start_date": "2020-01-01",
+                        "end_date": "2022-01-01",
+                    },
+                    {"degree": "Missing school"},
+                ],
+            }
+        }
+
+        parsed = parse_resume_upload(
+            filename="resume.docx",
+            payload=payload,
+            profile_id="primary",
+            llm_runtime=_build_llm_runtime_with_response(json.dumps(llm_response)),
+        )
+
+        self.assertEqual(len(parsed["profile"]["experiences"]), 2)
+        new_experience = parsed["profile"]["experiences"][1]
+        self.assertEqual(new_experience["id"], "exp-custom")
+        self.assertEqual(new_experience["company"], "Beta Labs")
+        self.assertEqual(new_experience["title"], "Platform Engineer")
+        self.assertEqual(new_experience["skills"], ["Go", "Python"])
+
+        self.assertEqual(len(parsed["profile"]["projects"]), 2)
+        new_project = parsed["profile"]["projects"][1]
+        self.assertEqual(new_project["id"], "proj-custom")
+        self.assertEqual(new_project["name"], "Parser Monitor")
+        self.assertEqual(new_project["url"], "https://example.com/monitor")
+        self.assertEqual(new_project["skills"], ["React", "TypeScript"])
+
+        self.assertEqual(len(parsed["profile"]["education"]), 2)
+        new_education = parsed["profile"]["education"][1]
+        self.assertEqual(new_education["id"], "edu-custom")
+        self.assertEqual(new_education["school"], "MIT")
+        self.assertEqual(new_education["degree"], "MS Computer Science")
+        self.assertEqual(new_education["field"], "AI")
+
     def test_parse_falls_back_when_llm_response_is_invalid(self) -> None:
         payload = _build_docx(
             [

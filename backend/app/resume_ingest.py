@@ -7,7 +7,7 @@ import re
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from xml.etree import ElementTree
 
 from autoapply.llm import LlmExecutionMetadata, LlmRuntime, PromptMessage, load_llm_config
@@ -319,7 +319,13 @@ def _merge_profile_candidate(*, baseline: dict[str, Any], candidate: dict[str, A
     return merged
 
 
-def _merge_experience_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
+def _merge_profile_entries(
+    *,
+    baseline_entries: list[dict[str, Any]],
+    candidate_entries: Any,
+    merge_existing: Callable[[dict[str, Any], dict[str, Any]], None],
+    build_new: Callable[[int, dict[str, Any]], dict[str, Any] | None],
+) -> list[dict[str, Any]]:
     if not isinstance(candidate_entries, list):
         return [_clone_profile(entry) for entry in baseline_entries]
 
@@ -330,175 +336,151 @@ def _merge_experience_entries(*, baseline_entries: list[dict[str, Any]], candida
         if idx < len(baseline_entries):
             entry = _clone_profile(baseline_entries[idx])
             if isinstance(candidate, dict):
-                company = _as_non_empty_string(candidate.get("company"))
-                if company is not None:
-                    entry["company"] = company
-
-                title = _as_non_empty_string(candidate.get("title"))
-                if title is not None:
-                    entry["title"] = title
-
-                start_date = _as_non_empty_string(candidate.get("start_date"))
-                if start_date is not None:
-                    entry["start_date"] = start_date
-
-                end_date = _as_nullable_string_update(candidate.get("end_date"))
-                if end_date is not _NO_UPDATE:
-                    entry["end_date"] = end_date
-
-                bullets = _as_string_list(candidate.get("bullets"))
-                if bullets is not None:
-                    entry["bullets"] = bullets
-
-                skills = _as_string_list(candidate.get("skills"))
-                if skills is not None:
-                    entry["skills"] = _dedupe_case_preserving(skills)
+                merge_existing(entry, candidate)
             merged.append(entry)
             continue
 
         if not isinstance(candidate, dict):
             continue
-        company = _as_non_empty_string(candidate.get("company"))
-        title = _as_non_empty_string(candidate.get("title"))
-        if company is None or title is None:
-            continue
-
-        start_date = _as_non_empty_string(candidate.get("start_date")) or ""
-        end_date = _as_nullable_string_update(candidate.get("end_date"))
-        if end_date is _NO_UPDATE:
-            end_date = None
-        entry = _new_experience(idx + 1, company, title, start_date, end_date)
-        entry_id = _as_non_empty_string(candidate.get("id"))
-        if entry_id is not None:
-            entry["id"] = entry_id
-
-        bullets = _as_string_list(candidate.get("bullets"))
-        skills = _as_string_list(candidate.get("skills"))
-        entry["bullets"] = bullets or []
-        entry["skills"] = _dedupe_case_preserving(skills or [])
-        merged.append(entry)
-
+        new_entry = build_new(idx, candidate)
+        if new_entry is not None:
+            merged.append(new_entry)
     return merged
+
+
+def _merge_experience_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
+    return _merge_profile_entries(
+        baseline_entries=baseline_entries,
+        candidate_entries=candidate_entries,
+        merge_existing=_merge_existing_experience_entry,
+        build_new=_build_new_experience_entry,
+    )
+
+
+def _merge_existing_experience_entry(entry: dict[str, Any], candidate: dict[str, Any]) -> None:
+    _assign_non_empty_string_field(entry, candidate, "company")
+    _assign_non_empty_string_field(entry, candidate, "title")
+    _assign_non_empty_string_field(entry, candidate, "start_date")
+    _assign_nullable_string_field(entry, candidate, "end_date")
+    _assign_string_list_field(entry, candidate, "bullets")
+    _assign_string_list_field(entry, candidate, "skills", dedupe=True)
+
+
+def _build_new_experience_entry(index: int, candidate: dict[str, Any]) -> dict[str, Any] | None:
+    company = _as_non_empty_string(candidate.get("company"))
+    title = _as_non_empty_string(candidate.get("title"))
+    if company is None or title is None:
+        return None
+
+    start_date = _as_non_empty_string(candidate.get("start_date")) or ""
+    end_date = _as_nullable_string_update(candidate.get("end_date"))
+    resolved_end_date: str | None = None if end_date is _NO_UPDATE else end_date
+    entry = _new_experience(index + 1, company, title, start_date, resolved_end_date)
+
+    entry_id = _as_non_empty_string(candidate.get("id"))
+    if entry_id is not None:
+        entry["id"] = entry_id
+
+    bullets = _as_string_list(candidate.get("bullets"))
+    skills = _as_string_list(candidate.get("skills"))
+    entry["bullets"] = bullets or []
+    entry["skills"] = _dedupe_case_preserving(skills or [])
+    return entry
 
 
 def _merge_project_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
-    if not isinstance(candidate_entries, list):
-        return [_clone_profile(entry) for entry in baseline_entries]
+    return _merge_profile_entries(
+        baseline_entries=baseline_entries,
+        candidate_entries=candidate_entries,
+        merge_existing=_merge_existing_project_entry,
+        build_new=_build_new_project_entry,
+    )
 
-    merged: list[dict[str, Any]] = []
-    target_count = max(len(baseline_entries), len(candidate_entries))
-    for idx in range(target_count):
-        candidate = candidate_entries[idx] if idx < len(candidate_entries) else None
-        if idx < len(baseline_entries):
-            entry = _clone_profile(baseline_entries[idx])
-            if isinstance(candidate, dict):
-                name = _as_non_empty_string(candidate.get("name"))
-                if name is not None:
-                    entry["name"] = name
 
-                description = _as_non_empty_string(candidate.get("description"))
-                if description is not None:
-                    entry["description"] = description
+def _merge_existing_project_entry(entry: dict[str, Any], candidate: dict[str, Any]) -> None:
+    _assign_non_empty_string_field(entry, candidate, "name")
+    _assign_non_empty_string_field(entry, candidate, "description")
+    _assign_nullable_string_field(entry, candidate, "url")
+    _assign_string_list_field(entry, candidate, "bullets")
+    _assign_string_list_field(entry, candidate, "skills", dedupe=True)
 
-                url = _as_nullable_string_update(candidate.get("url"))
-                if url is not _NO_UPDATE:
-                    entry["url"] = url
 
-                bullets = _as_string_list(candidate.get("bullets"))
-                if bullets is not None:
-                    entry["bullets"] = bullets
+def _build_new_project_entry(index: int, candidate: dict[str, Any]) -> dict[str, Any] | None:
+    name = _as_non_empty_string(candidate.get("name"))
+    if name is None:
+        return None
+    description = _as_non_empty_string(candidate.get("description")) or ""
+    entry = _new_project(index + 1, name, description)
 
-                skills = _as_string_list(candidate.get("skills"))
-                if skills is not None:
-                    entry["skills"] = _dedupe_case_preserving(skills)
-            merged.append(entry)
-            continue
+    entry_id = _as_non_empty_string(candidate.get("id"))
+    if entry_id is not None:
+        entry["id"] = entry_id
 
-        if not isinstance(candidate, dict):
-            continue
-        name = _as_non_empty_string(candidate.get("name"))
-        if name is None:
-            continue
-        description = _as_non_empty_string(candidate.get("description")) or ""
-        entry = _new_project(idx + 1, name, description)
-        entry_id = _as_non_empty_string(candidate.get("id"))
-        if entry_id is not None:
-            entry["id"] = entry_id
-
-        url = _as_nullable_string_update(candidate.get("url"))
-        if url is not _NO_UPDATE:
-            entry["url"] = url
-
-        bullets = _as_string_list(candidate.get("bullets"))
-        skills = _as_string_list(candidate.get("skills"))
-        entry["bullets"] = bullets or []
-        entry["skills"] = _dedupe_case_preserving(skills or [])
-        merged.append(entry)
-    return merged
+    _assign_nullable_string_field(entry, candidate, "url")
+    bullets = _as_string_list(candidate.get("bullets"))
+    skills = _as_string_list(candidate.get("skills"))
+    entry["bullets"] = bullets or []
+    entry["skills"] = _dedupe_case_preserving(skills or [])
+    return entry
 
 
 def _merge_education_entries(*, baseline_entries: list[dict[str, Any]], candidate_entries: Any) -> list[dict[str, Any]]:
-    if not isinstance(candidate_entries, list):
-        return [_clone_profile(entry) for entry in baseline_entries]
+    return _merge_profile_entries(
+        baseline_entries=baseline_entries,
+        candidate_entries=candidate_entries,
+        merge_existing=_merge_existing_education_entry,
+        build_new=_build_new_education_entry,
+    )
 
-    merged: list[dict[str, Any]] = []
-    target_count = max(len(baseline_entries), len(candidate_entries))
-    for idx in range(target_count):
-        candidate = candidate_entries[idx] if idx < len(candidate_entries) else None
-        if idx < len(baseline_entries):
-            entry = _clone_profile(baseline_entries[idx])
-            if isinstance(candidate, dict):
-                school = _as_non_empty_string(candidate.get("school"))
-                if school is not None:
-                    entry["school"] = school
 
-                degree = _as_non_empty_string(candidate.get("degree"))
-                if degree is not None:
-                    entry["degree"] = degree
+def _merge_existing_education_entry(entry: dict[str, Any], candidate: dict[str, Any]) -> None:
+    _assign_non_empty_string_field(entry, candidate, "school")
+    _assign_non_empty_string_field(entry, candidate, "degree")
+    _assign_nullable_string_field(entry, candidate, "field")
+    _assign_nullable_string_field(entry, candidate, "start_date")
+    _assign_nullable_string_field(entry, candidate, "end_date")
 
-                field = _as_nullable_string_update(candidate.get("field"))
-                if field is not _NO_UPDATE:
-                    entry["field"] = field
 
-                start_date = _as_nullable_string_update(candidate.get("start_date"))
-                if start_date is not _NO_UPDATE:
-                    entry["start_date"] = start_date
+def _build_new_education_entry(index: int, candidate: dict[str, Any]) -> dict[str, Any] | None:
+    school = _as_non_empty_string(candidate.get("school"))
+    if school is None:
+        return None
+    degree = _as_non_empty_string(candidate.get("degree")) or ""
+    entry = _new_education(index + 1, school, degree)
 
-                end_date = _as_nullable_string_update(candidate.get("end_date"))
-                if end_date is not _NO_UPDATE:
-                    entry["end_date"] = end_date
-            merged.append(entry)
-            continue
+    entry_id = _as_non_empty_string(candidate.get("id"))
+    if entry_id is not None:
+        entry["id"] = entry_id
 
-        if not isinstance(candidate, dict):
-            continue
-        school = _as_non_empty_string(candidate.get("school"))
-        if school is None:
-            continue
-        degree = _as_non_empty_string(candidate.get("degree")) or ""
-        entry = {
-            "id": f"edu-{idx + 1}",
-            "school": school,
-            "degree": degree,
-            "field": None,
-            "start_date": None,
-            "end_date": None,
-        }
-        entry_id = _as_non_empty_string(candidate.get("id"))
-        if entry_id is not None:
-            entry["id"] = entry_id
+    _assign_nullable_string_field(entry, candidate, "field")
+    _assign_nullable_string_field(entry, candidate, "start_date")
+    _assign_nullable_string_field(entry, candidate, "end_date")
+    return entry
 
-        field = _as_nullable_string_update(candidate.get("field"))
-        if field is not _NO_UPDATE:
-            entry["field"] = field
-        start_date = _as_nullable_string_update(candidate.get("start_date"))
-        if start_date is not _NO_UPDATE:
-            entry["start_date"] = start_date
-        end_date = _as_nullable_string_update(candidate.get("end_date"))
-        if end_date is not _NO_UPDATE:
-            entry["end_date"] = end_date
-        merged.append(entry)
-    return merged
+
+def _assign_non_empty_string_field(entry: dict[str, Any], candidate: dict[str, Any], field: str) -> None:
+    value = _as_non_empty_string(candidate.get(field))
+    if value is not None:
+        entry[field] = value
+
+
+def _assign_nullable_string_field(entry: dict[str, Any], candidate: dict[str, Any], field: str) -> None:
+    value = _as_nullable_string_update(candidate.get(field))
+    if value is not _NO_UPDATE:
+        entry[field] = value
+
+
+def _assign_string_list_field(
+    entry: dict[str, Any],
+    candidate: dict[str, Any],
+    field: str,
+    *,
+    dedupe: bool = False,
+) -> None:
+    values = _as_string_list(candidate.get(field))
+    if values is None:
+        return
+    entry[field] = _dedupe_case_preserving(values) if dedupe else values
 
 
 def _as_non_empty_string(value: Any) -> str | None:
@@ -1549,6 +1531,17 @@ def _new_project(entry_number: int, name: str, description: str) -> dict[str, An
     }
 
 
+def _new_education(entry_number: int, school: str, degree: str) -> dict[str, Any]:
+    return {
+        "id": f"edu-{entry_number}",
+        "school": school,
+        "degree": degree,
+        "field": None,
+        "start_date": None,
+        "end_date": None,
+    }
+
+
 def _extract_education(lines: list[str]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     counter = 1
@@ -1566,16 +1559,11 @@ def _extract_education(lines: list[str]) -> list[dict[str, Any]]:
         degree = parts[1] if len(parts) > 1 else ""
         field = parts[2] if len(parts) > 2 else None
 
-        entries.append(
-            {
-                "id": f"edu-{counter}",
-                "school": school,
-                "degree": degree,
-                "field": field,
-                "start_date": start_date or None,
-                "end_date": end_date,
-            }
-        )
+        entry = _new_education(counter, school, degree)
+        entry["field"] = field
+        entry["start_date"] = start_date or None
+        entry["end_date"] = end_date
+        entries.append(entry)
         counter += 1
 
     return entries
