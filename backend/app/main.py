@@ -48,6 +48,9 @@ _PROFILE_RESUME_PARSE_LEGACY_PATH = "/api/v1/profile/ingest"
 _HEALTH_PATH = "/health"
 _REQUEST_ID_HEADER = "X-Request-Id"
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_AUDIT_EXPORT_DEFAULT_RESUME_VERSIONS_LIMIT = 250
+_AUDIT_EXPORT_MAX_RESUME_VERSIONS_LIMIT = 500
+_AUDIT_EXPORT_RESUME_VERSIONS_CHUNK_SIZE = 100
 _ALLOWED_STATUSES = {
     "captured",
     "drafting",
@@ -185,7 +188,7 @@ def _build_handler(capture_db: CaptureDatabase):
 
             match = _APPLICATION_AUDIT_EXPORT_PATTERN.match(parsed.path)
             if match:
-                self._handle_application_audit_export(match.group(1))
+                self._handle_application_audit_export(match.group(1), parsed.query)
                 return
 
             match = _RESUME_VERSION_PATTERN.match(parsed.path)
@@ -428,7 +431,45 @@ def _build_handler(capture_db: CaptureDatabase):
                 return
             _json_response(self, HTTPStatus.OK, resume_version)
 
-        def _handle_application_audit_export(self, application_id: str) -> None:
+        def _handle_application_audit_export(self, application_id: str, query: str) -> None:
+            query_params = parse_qs(query, keep_blank_values=True)
+            limit, limit_error = self._read_positive_query_int(
+                query_params,
+                "resume_versions_limit",
+                default=_AUDIT_EXPORT_DEFAULT_RESUME_VERSIONS_LIMIT,
+            )
+            if limit_error is not None:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": limit_error})
+                return
+            if limit is None:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid resume_versions_limit"})
+                return
+
+            offset, offset_error = self._read_non_negative_query_int(
+                query_params,
+                "resume_versions_offset",
+                default=0,
+            )
+            if offset_error is not None:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": offset_error})
+                return
+            if offset is None:
+                _json_response(self, HTTPStatus.BAD_REQUEST, {"detail": "invalid resume_versions_offset"})
+                return
+
+            if limit > _AUDIT_EXPORT_MAX_RESUME_VERSIONS_LIMIT:
+                _json_response(
+                    self,
+                    HTTPStatus.UNPROCESSABLE_ENTITY,
+                    {
+                        "detail": (
+                            "resume_versions_limit exceeds maximum "
+                            f"({_AUDIT_EXPORT_MAX_RESUME_VERSIONS_LIMIT})"
+                        )
+                    },
+                )
+                return
+
             try:
                 application = capture_db.get_application(application_id)
                 job_posting = capture_db.get_job_posting_for_application(application_id)
@@ -436,13 +477,35 @@ def _build_handler(capture_db: CaptureDatabase):
                 _json_response(self, HTTPStatus.NOT_FOUND, {"detail": str(err)})
                 return
 
+            total_versions = capture_db.count_resume_versions_for_application(application_id)
+            resume_versions = capture_db.list_resume_versions_for_application_window(
+                application_id,
+                limit=limit,
+                offset=offset,
+                chunk_size=_AUDIT_EXPORT_RESUME_VERSIONS_CHUNK_SIZE,
+            )
+            returned_versions = len(resume_versions)
+            consumed_versions = min(total_versions, offset + returned_versions)
+            remaining_versions = max(total_versions - consumed_versions, 0)
+
             _json_response(
                 self,
                 HTTPStatus.OK,
                 {
                     "application": application,
                     "job_posting": job_posting,
-                    "resume_versions": capture_db.list_resume_versions_for_application(application_id),
+                    "resume_versions": resume_versions,
+                    "resume_versions_page": {
+                        "limit": limit,
+                        "offset": offset,
+                        "returned": returned_versions,
+                        "total": total_versions,
+                        "has_more": remaining_versions > 0,
+                    },
+                    "export_limits": {
+                        "default_resume_versions_limit": _AUDIT_EXPORT_DEFAULT_RESUME_VERSIONS_LIMIT,
+                        "max_resume_versions_limit": _AUDIT_EXPORT_MAX_RESUME_VERSIONS_LIMIT,
+                    },
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -765,6 +828,45 @@ def _build_handler(capture_db: CaptureDatabase):
             if parsed <= 0:
                 return None
             return parsed
+
+        def _read_positive_query_int(
+            self,
+            params: dict[str, list[str]],
+            field: str,
+            *,
+            default: int,
+        ) -> tuple[int | None, str | None]:
+            raw_values = params.get(field)
+            if raw_values is None:
+                return default, None
+            raw_value = raw_values[0].strip()
+            if raw_value == "":
+                return None, f"invalid query parameter: {field} must be a positive integer"
+            parsed = self._read_positive_int(raw_value, default=default)
+            if parsed is None:
+                return None, f"invalid query parameter: {field} must be a positive integer"
+            return parsed, None
+
+        def _read_non_negative_query_int(
+            self,
+            params: dict[str, list[str]],
+            field: str,
+            *,
+            default: int,
+        ) -> tuple[int | None, str | None]:
+            raw_values = params.get(field)
+            if raw_values is None:
+                return default, None
+            raw_value = raw_values[0].strip()
+            if raw_value == "":
+                return None, f"invalid query parameter: {field} must be a non-negative integer"
+            try:
+                parsed = int(raw_value)
+            except ValueError:
+                return None, f"invalid query parameter: {field} must be a non-negative integer"
+            if parsed < 0:
+                return None, f"invalid query parameter: {field} must be a non-negative integer"
+            return parsed, None
 
         def log_message(self, _format: str, *_args: Any) -> None:
             return

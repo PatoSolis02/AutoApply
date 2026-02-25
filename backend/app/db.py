@@ -271,20 +271,68 @@ class CaptureDatabase:
             "updated_at": row["updated_at"],
         }
 
-    def list_resume_versions_for_application(self, application_id: str) -> list[dict[str, Any]]:
+    def count_resume_versions_for_application(self, application_id: str) -> int:
         with self.connection() as conn:
-            rows = conn.execute(
+            row = conn.execute(
                 """
-                SELECT id, application_id, template_id, pdf_path, rendered_html_path,
-                       render_model_json, change_log_json, claims_map_json, approval_approved,
-                       approval_approved_at, created_at
+                SELECT COUNT(*) AS total
                 FROM resume_versions
                 WHERE application_id = ?
-                ORDER BY created_at ASC, id ASC
                 """,
                 (application_id,),
-            ).fetchall()
-        return [self._resume_version_from_row(row) for row in rows]
+            ).fetchone()
+        return int(row["total"]) if row else 0
+
+    def list_resume_versions_for_application_window(
+        self,
+        application_id: str,
+        *,
+        limit: int,
+        offset: int = 0,
+        chunk_size: int = 100,
+    ) -> list[dict[str, Any]]:
+        if limit < 0:
+            raise ValueError("limit must be non-negative")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+
+        versions: list[dict[str, Any]] = []
+        remaining = limit
+        current_offset = offset
+
+        with self.connection() as conn:
+            while remaining > 0:
+                effective_chunk_size = min(remaining, chunk_size)
+                rows = conn.execute(
+                    """
+                    SELECT id, application_id, template_id, pdf_path, rendered_html_path,
+                           render_model_json, change_log_json, claims_map_json, approval_approved,
+                           approval_approved_at, created_at
+                    FROM resume_versions
+                    WHERE application_id = ?
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (application_id, effective_chunk_size, current_offset),
+                ).fetchall()
+                if not rows:
+                    break
+                versions.extend(self._resume_version_from_row(row) for row in rows)
+                fetched = len(rows)
+                remaining -= fetched
+                current_offset += fetched
+                if fetched < effective_chunk_size:
+                    break
+
+        return versions
+
+    def list_resume_versions_for_application(self, application_id: str) -> list[dict[str, Any]]:
+        return self.list_resume_versions_for_application_window(
+            application_id,
+            limit=self.count_resume_versions_for_application(application_id),
+        )
 
     def list_resume_versions(self, application_id: str) -> list[dict[str, Any]]:
         return [self._to_resume_timeline(version) for version in self.list_resume_versions_for_application(application_id)]
