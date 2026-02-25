@@ -10,19 +10,22 @@ Use it first, then open the specific process doc for the task at hand.
 
 ## Active Process Docs
 
-1. `docs/process/ROADMAP_BACKLOG.md`
+1. `docs/process/MVP_SCOPE.md`
+- Canonical MVP definition and in-scope/out-of-scope gates for sprint selection.
+
+2. `docs/process/ROADMAP_BACKLOG.md`
 - Priority queue, active task ordering, and sprint-batch selection source.
 
-2. `docs/process/LINEAR_WORKFLOW.md`
+3. `docs/process/LINEAR_WORKFLOW.md`
 - Linear object model, status protocol, dependency rules, and close checklist.
 
-3. `docs/process/PARALLEL_WORKSTREAMS.md`
+4. `docs/process/PARALLEL_WORKSTREAMS.md`
 - Parallel thread/worktree guardrails and integration sequencing rules.
 
-4. `docs/process/MAINTENANCE_THREADS.md`
+5. `docs/process/MAINTENANCE_THREADS.md`
 - Every-two-sprints organizer/refactor maintenance lane kickoff templates.
 
-5. `docs/process/TOOLING_BASELINE.md`
+6. `docs/process/TOOLING_BASELINE.md`
 - Runtime baseline plus canonical verification commands.
 
 ## Companion Operational Docs

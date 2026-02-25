@@ -51,7 +51,7 @@ A sprint is a selected batch of parallel threads that can run together without o
 
 Sprint lifecycle:
 
-1. Select thread batch from backlog by priority + dependency readiness.
+1. Select thread batch from backlog by MVP gate (`docs/process/MVP_SCOPE.md`) + dependency readiness.
 2. Launch all non-overlapping threads in parallel (each in separate worktree).
 3. Integrate all completed thread handoffs into `codex/integration`.
 4. Run recap/retrospective and update backlog ordering.
@@ -86,7 +86,7 @@ Recommended workstream types (choose only what applies for the sprint batch):
 
 Use this algorithm each sprint to decide which parallel threads run together:
 
-1. Start from highest-priority ready backlog items.
+1. Start from highest-priority ready MVP items (`MVP-P0` then `MVP-P1`).
 2. Group tasks by ownership boundary (files/contracts), not by equal workload.
 3. Split into separate threads only when overlap is low.
 4. Keep overlapping tasks in one thread or sequence them in a later batch.

@@ -1,154 +1,115 @@
 # AutoApply Roadmap and Backlog
 
-Last updated: 2026-02-25
+Last updated: 2026-02-25  
 Owner: Integration/Product thread
+
+## Source of Truth
+
+MVP scope and gates are defined in:
+
+- `docs/process/MVP_SCOPE.md`
+
+If any backlog item conflicts with that file, `MVP_SCOPE.md` wins.
 
 ## Current Snapshot
 
-- Sprint 7 integrated on `codex/integration`.
-- Core flow remains operational: capture -> generate -> review -> approve -> ready_to_apply.
-- Reliability and generation gains now in place:
-  - contract fallback hardening (`AUT-13`)
-  - deterministic API workflow smoke tests in CI (`AUT-11`)
-  - LLM-assisted parse normalization with deterministic fallback (`AUT-12`)
-  - structured request observability with request IDs (`AUT-14`)
-  - LLM-based tailored resume generation with deterministic fallback (`AUT-15`)
-  - parser/runtime technical debt cleanup (`AUT-16`)
-  - sqlite runtime warning cleanup (`AUT-23`)
-- Remaining roadmap focus is advanced product features, packaging/release hardening, and low-risk cleanup.
+- Sprint 08 implementation is integrated on `codex/integration`.
+- Core local-first flow exists, but MVP focus is being reset to prevent feature drift.
+- Current planning priority is to close MVP-critical gaps before additional non-essential features.
 
-## Priority Scale
+## Priority Model
 
-- `1` = highest priority, blocks roadmap progress
-- `2` = high priority, should follow immediately after priority 1
-- `3` = important, can run after core stability work
-- `4` = medium, value-add after core delivery
-- `5` = low, polish or deferable work
+Use both labels and rank order:
 
-## Linear Translation Rules
+- `MVP-P0`: required for MVP acceptance criteria
+- `MVP-P1`: reliability/usability required for practical MVP use
+- `POST-MVP`: valuable, but not required for first release
 
-When creating/updating Linear issues from this backlog:
+Gate:
 
-1. Use backlog IDs (`Q-*`, `B-*`, `F-*`, `C-*`) as references in description only.
-2. Do not prefix Linear issue titles with backlog IDs.
-3. Use labels for classification (`quality`, `Bug`, `Feature`, `cleanup`, and `fg-*` feature groups).
-4. Use full story sections from `docs/process/LINEAR_WORKFLOW.md`:
-- `Why`
-- `Scope`
-- `Out of scope`
-- `Exit criteria`
-- `Definition of done`
+- Do not schedule `POST-MVP` work while `MVP-P0` items remain open, unless explicitly approved as a dependency unblocker.
+
+## Ordered Active Task Queue (MVP-First)
+
+1. `MVP-P0` Account auth baseline
+- Scope: signup/login/logout/session persistence; per-user data boundary.
+- Why now: user-facing MVP requires account and login as entry point.
+- Linear: `AUT-28`.
+
+2. `MVP-P0` Resume ingest -> profile auto-fill + editable sections
+- Scope: parse resume and auto-populate profile sections (experiences/projects/skills), with user edits persisted.
+- Why now: required input foundation for controlled tailoring.
+- Builds on: `AUT-12` parsing normalization foundation.
+- Linear: `AUT-29`.
+
+3. `MVP-P0` Controlled tailored generation contract
+- Scope: user chooses skills/projects/experiences/keywords for a specific job generation request.
+- Also required: explicit generated resume format contract/template.
+- Why now: directly maps to MVP value proposition.
+- Builds on: `AUT-15` generation foundation.
+- Linear: `AUT-30`.
+
+4. `MVP-P0` Core tracking usability and correctness
+- Scope: create/update/view core application statuses with practical user workflow coverage.
+- Why now: required final stage of MVP manual-apply loop.
+- Linear: `AUT-31`.
+
+5. `MVP-P0` Capture reliability hardening
+- Scope: raise capture success on real pages and strengthen error recovery guidance.
+- Why now: pipeline entry quality directly controls MVP success.
+- Linear: `AUT-32`.
+
+6. `MVP-P1` End-to-end MVP acceptance tests
+- Scope: deterministic tests covering login -> capture -> ingest -> controlled generate -> manual apply tracking.
+- Builds on: `AUT-11` smoke baseline.
+- Linear: `AUT-33`.
+
+7. `MVP-P1` Resume parser quality hardening for common resume variants
+- Scope: improve extraction reliability for core profile fields used in generation controls.
+
+## Post-MVP Queue
+
+These are not sprint-selection candidates while `MVP-P0` remains open:
+
+1. `AUT-17` Advanced audit export for larger histories
+2. `AUT-18` Fit scoring and gap analysis
+3. `AUT-20` Non-critical refactor and polish cleanup
+
+Operational/support lane (allowed only when it unblocks MVP execution):
+
+1. `AUT-19` Packaging and release documentation hardening
 
 ## Recently Completed (Integrated)
 
-Sprint 05:
-
-- `Q-1` Resume parsing field accuracy
-- `B-1` PDF extraction edge-case fixes
-- `F-1` LLM provider integration foundation
-- `Q-2` LinkedIn capture reliability hardening
-- `Q-3` Human-friendly UI/navigation improvements
-
 Sprint 06:
 
-- `Q-4` End-to-end workflow smoke tests in CI (`AUT-11`)
-- `F-2` LLM-assisted resume parsing normalization (`AUT-12`)
-- `B-2` Contract mismatch and fallback hardening (`AUT-13`)
-- `C-1` Runtime/API observability and diagnosability (`AUT-14`)
+- `AUT-11` End-to-end workflow smoke tests in CI
+- `AUT-12` LLM-assisted resume parsing normalization
+- `AUT-13` Contract mismatch and fallback hardening
+- `AUT-14` Runtime/API observability improvements
 
 Sprint 07:
 
-- `F-3` LLM-based tailored resume generation (`AUT-15`)
-- `C-2` Cleanup technical debt in parser/test/runtime plumbing (`AUT-16`)
-- `C-5` Test runtime resource warning cleanup (`AUT-23`)
+- `AUT-15` LLM-based tailored resume generation
+- `AUT-16` parser/runtime technical debt cleanup
+- `AUT-23` test runtime resource warning cleanup
 
-## Ordered Active Task Queue (Execution Order)
+Sprint 08:
 
-1. `F-4` Advanced audit export for larger histories (`AUT-17`) - Priority `4`
-2. `F-5` Fit scoring phase execution (`AUT-18`) - Priority `4`
-3. `C-3` Packaging and release documentation hardening (`AUT-19`) - Priority `4`
-4. `C-4` Non-critical refactor/polish cleanup (`AUT-20`) - Priority `5`
+- `AUT-17` advanced audit export for larger histories
+- `AUT-18` fit scoring and gap analysis
+- `AUT-19` packaging and release documentation hardening
 
-## Feature Work
+## Sprint Selection Rules
 
-- `F-4` Advanced audit export - Priority `4`
-- Scope: large-history handling (pagination/chunking/stream/file export path).
-- Exit criteria: predictable export behavior for large histories without regressions.
-
-- `F-5` Fit scoring - Priority `4`
-- Scope: score jobs by alignment and provide gap analysis.
-- Exit criteria: stable scoring contract and actionable gap output.
-
-## Cleanup and Technical Debt
-
-- `C-3` Release/packaging docs cleanup - Priority `4`
-- Scope: operational docs for extension/app packaging and repeatable release steps.
-- Exit criteria: reproducible release runbook validated against current workflow.
-
-- `C-4` Low-impact refactors - Priority `5`
-- Scope: naming consistency, minor reorganizations, non-behavioral cleanup.
-- Exit criteria: readability improvements with no functional change.
-
-## Parallelization Policy (No Overlap)
-
-- Use as many threads as makes sense for independent ownership lanes.
-- Maximize parallelism only when scope boundaries are clear and file overlap is minimal.
-- One task should have one owner thread at a time.
-- If two tasks touch the same primary files/contracts, keep them in one thread or sequence them.
-
-Parallel assignment rules:
-
-1. Assign by ownership boundary, not by equal team size.
-2. Create a file/path ownership map before kickoff.
-3. Do not run parallel threads with overlapping write scope unless integration owner explicitly approves.
-4. Route cross-thread contract changes through integration owner first.
-5. Merge in dependency order: foundations -> features -> UX wiring -> test hardening/docs.
-
-Recommended active split for current queue:
-
-1. Thread A: advanced audit export lane
-- `F-4`
-
-2. Thread B: fit scoring lane
-- `F-5`
-
-3. Thread C: operations/docs release lane
-- `C-3`
-
-4. Thread D: polish cleanup lane (optional, capacity permitting)
-- `C-4`
-
-## Sprint Structure Recommendation (Thread-Batch Model)
-
-Sprint meaning in this repo:
-
-- A sprint is the group of threads run in parallel together, then integrated, recapped, and reprioritized.
-- It is a delivery batch model first; calendar length is secondary.
-
-How to decide which threads/tasks run together:
-
-1. Start from top of `Ordered Active Task Queue`.
-2. Take highest-priority tasks that are dependency-ready.
-3. Build a candidate batch using non-overlapping ownership boundaries:
-- different primary files/directories
-- no conflicting contract edits
-- minimal merge collision risk
-4. Stop adding tasks when overlap risk rises or integration complexity becomes high.
-5. Launch each selected task as its own thread + worktree.
-
-Recommended batch size:
-
-- Usually 3-5 parallel threads.
-- Expand only when ownership is cleanly separable.
-- Reduce when task coupling is high.
-
-Capacity guardrail:
-
-- Keep 20-30% capacity for regressions/hotfixes discovered during integration.
+1. Select from `MVP-P0` first.
+2. Add `MVP-P1` only if no `MVP-P0` is blocked by missing dependencies.
+3. Keep thread scopes non-overlapping; one owner per task.
+4. Reserve `POST-MVP` for explicitly approved exceptions.
 
 ## Working Backlog Rules
 
-1. Every delivered thread must update its handoff with:
+1. Every delivered thread handoff must include:
 - commit hash
 - tests run
 - contract assumptions/risks
@@ -157,10 +118,7 @@ Capacity guardrail:
 - `sprints/<sprint>/SPRINT_LOG.md`
 - `sprints/<sprint>/RETROSPECTIVE.md`
 - per-thread reflections
-- roadmap/backlog update in this file
+- backlog refresh in this file
 
 3. Every two sprints, run maintenance threads using:
 - `docs/process/MAINTENANCE_THREADS.md`
-
-4. Private sample artifacts (resumes, sensitive docs) stay untracked under:
-- `artifacts/`

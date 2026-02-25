@@ -1,6 +1,6 @@
 # Linear Workflow Guide
 
-Last updated: 2026-02-24
+Last updated: 2026-02-25
 Owner: Integration/Product thread
 
 ## Purpose
@@ -13,6 +13,10 @@ Use Linear as the execution control plane; use git/worktrees as the implementati
 
 - Linear tracks: priority, ownership, status, blockers, dependencies, recap.
 - Git tracks: branches, commits, tests, integrations.
+
+MVP gate source:
+
+- `docs/process/MVP_SCOPE.md`
 
 ## Object Model
 
@@ -85,12 +89,21 @@ Standard label set:
 - topic labels: `quality`, `bug`, `feature`, `cleanup`
 - technical labels: `llm`, `capture`, `ux`, `parser`, `integration`
 - cycle label: `sprint-XX`
+- MVP priority labels:
+  - `mvp-p0`
+  - `mvp-p1`
+  - `post-mvp`
 - feature-group labels:
   - `fg-core-reliability`
   - `fg-llm-intelligence`
   - `fg-user-experience`
   - `fg-platform-ops`
   - `fg-advanced-product`
+
+MVP gating rule:
+
+1. Every backlog issue must carry exactly one of `mvp-p0`, `mvp-p1`, or `post-mvp`.
+2. Do not select `post-mvp` sprint work while open `mvp-p0` issues remain, unless explicitly approved as dependency unblockers.
 
 ## Dependency Rules
 
@@ -124,14 +137,15 @@ At sprint start, select work only from Linear `Backlog` issues and move selected
 
 Required kickoff sequence:
 
-1. Select sprint batch from Linear backlog by priority + dependency readiness.
-2. Apply sprint label (`sprint-XX`) to selected issues.
-3. Move selected implementation issues to `Todo`.
-4. Move each issue to `In Progress` only when:
+1. Validate candidate issues against `docs/process/MVP_SCOPE.md` and confirm MVP label (`mvp-p0`, `mvp-p1`, or `post-mvp`).
+2. Select sprint batch from Linear backlog by MVP gate + dependency readiness.
+3. Apply sprint label (`sprint-XX`) to selected issues.
+4. Move selected implementation issues to `Todo`.
+5. Move each issue to `In Progress` only when:
 - dedicated branch/worktree is created
 - owner thread has started coding
-5. Move issue to `In Review` when handoff is complete and awaiting integration.
-6. Move issue to `Done` only after merge + verification on `codex/integration`.
+6. Move issue to `In Review` when handoff is complete and awaiting integration.
+7. Move issue to `Done` only after merge + verification on `codex/integration`.
 
 Sprint tracking issues:
 
@@ -219,12 +233,14 @@ Implemented setup from repo docs:
   - `AUT-9` blocked by `AUT-5`, `AUT-6`, `AUT-7`, `AUT-8`
   - `AUT-10` blocked by `AUT-9`
 
-2. Backlog queue created from `docs/process/ROADMAP_BACKLOG.md`:
-- `AUT-11` through `AUT-20`
+2. Backlog queue currently includes:
+- historical series `AUT-11` through `AUT-20`
+- MVP refocus series `AUT-28` through `AUT-33`
 - Status set to `Backlog` for future sprint-batch selection.
 
 3. Label set created for this workflow:
 - `sprint-05`, `quality`, `llm`, `capture`, `ux`, `parser`, `integration`, `retrospective`, `cleanup`
+- MVP labels: `mvp-p0`, `mvp-p1`, `post-mvp`
 - Default Linear labels retained: `Feature`, `Bug`, `Improvement`
 - Feature-group labels added:
   - `fg-core-reliability`
