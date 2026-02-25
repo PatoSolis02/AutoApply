@@ -13,9 +13,9 @@ If any backlog item conflicts with that file, `MVP_SCOPE.md` wins.
 
 ## Current Snapshot
 
-- Sprint 08 implementation is integrated on `codex/integration`.
-- Core local-first flow exists, but MVP focus is being reset to prevent feature drift.
-- Current planning priority is to close MVP-critical gaps before additional non-essential features.
+- Sprint 09 implementation is integrated on `codex/integration`.
+- Core local-first flow exists with stronger auth/capture/format contracts.
+- Current planning priority is to close remaining MVP-P0 delivery gaps before any post-MVP scope.
 
 ## Priority Model
 
@@ -31,10 +31,10 @@ Gate:
 
 ## Ordered Active Task Queue (MVP-First)
 
-1. `MVP-P0` Account auth baseline
-- Scope: signup/login/logout/session persistence; per-user data boundary.
-- Why now: user-facing MVP requires account and login as entry point.
-- Linear: `AUT-28` (umbrella), `AUT-34`, `AUT-35`, `AUT-36`.
+1. `MVP-P0` Complete account auth baseline
+- Scope: finish auth UX and enforce per-user ownership boundaries across profile/applications.
+- Why now: backend auth primitives are done; MVP still needs protected UX and data isolation.
+- Linear: `AUT-28` (umbrella), `AUT-35`, `AUT-36`.
 
 2. `MVP-P0` Resume ingest -> profile auto-fill + editable sections
 - Scope: parse resume and auto-populate profile sections (experiences/projects/skills), with user edits persisted.
@@ -42,29 +42,23 @@ Gate:
 - Builds on: `AUT-12` parsing normalization foundation.
 - Linear: `AUT-29`.
 
-3. `MVP-P0` Controlled tailored generation contract
-- Scope: LLM receives full saved profile data (skills/projects/experiences) plus job data and automatically selects best-fit evidence.
-- Also required: explicit generated resume format contract/template based on `artifacts/resume_samples/Redacted Resume.pdf`.
-- Why now: directly maps to MVP value proposition.
-- Builds on: `AUT-15` generation foundation.
-- Linear: `AUT-30` (umbrella), `AUT-37`, `AUT-38`.
+3. `MVP-P0` Complete controlled tailored generation runtime behavior
+- Scope: LLM receives full saved profile data plus job data and automatically selects best-fit evidence.
+- Why now: format contract is done; MVP still needs automatic evidence selection behavior.
+- Builds on: `AUT-15` generation foundation and `AUT-37` format contract delivery.
+- Linear: `AUT-30` (umbrella), `AUT-38`.
 
 4. `MVP-P0` Core tracking usability and correctness
 - Scope: create/update/view core application statuses with practical user workflow coverage.
 - Why now: required final stage of MVP manual-apply loop.
 - Linear: `AUT-31`.
 
-5. `MVP-P0` Capture reliability hardening
-- Scope: raise capture success on real pages and strengthen error recovery guidance.
-- Why now: pipeline entry quality directly controls MVP success.
-- Linear: `AUT-32`.
-
-6. `MVP-P1` End-to-end MVP acceptance tests
+5. `MVP-P1` End-to-end MVP acceptance tests
 - Scope: deterministic tests covering login -> capture -> ingest -> controlled generate -> manual apply tracking.
 - Builds on: `AUT-11` smoke baseline.
 - Linear: `AUT-33`.
 
-7. `MVP-P1` Resume parser quality hardening for common resume variants
+6. `MVP-P1` Resume parser quality hardening for common resume variants
 - Scope: improve extraction reliability for core profile fields used in generation controls.
 - Linear: `AUT-39` (fixture expansion/eval harness).
 
@@ -72,13 +66,7 @@ Gate:
 
 These are not sprint-selection candidates while `MVP-P0` remains open:
 
-1. `AUT-17` Advanced audit export for larger histories
-2. `AUT-18` Fit scoring and gap analysis
-3. `AUT-20` Non-critical refactor and polish cleanup
-
-Operational/support lane (allowed only when it unblocks MVP execution):
-
-1. `AUT-19` Packaging and release documentation hardening
+1. `AUT-20` Non-critical refactor and polish cleanup
 
 ## Recently Completed (Integrated)
 
@@ -100,6 +88,12 @@ Sprint 08:
 - `AUT-17` advanced audit export for larger histories
 - `AUT-18` fit scoring and gap analysis
 - `AUT-19` packaging and release documentation hardening
+
+Sprint 09:
+
+- `AUT-32` real-job capture reliability hardening for MVP
+- `AUT-34` auth backend session and token contract
+- `AUT-37` generation format contract using redacted resume baseline
 
 ## Sprint Selection Rules
 

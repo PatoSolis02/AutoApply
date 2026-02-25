@@ -28,7 +28,7 @@ Date initialized: 2026-02-25
 - Blocked by: `AUT-34`, `AUT-32`, `AUT-37`
 
 2. `AUT-41` Sprint 09 recap and backlog rerank
-- Status: `Todo`
+- Status: `Done`
 - Blocked by: `AUT-40`
 
 ## Integration Outcome
@@ -42,6 +42,9 @@ Date initialized: 2026-02-25
   - `PYTHONPATH=. python3 -m unittest discover tests` -> PASS (`Ran 29 tests`)
   - `npm test` -> PASS (`8 files, 33 tests`)
   - `npm run build` -> PASS
+- Recap artifacts:
+  - `sprints/sprint-09/SPRINT_LOG.md`
+  - `sprints/sprint-09/RETROSPECTIVE.md`
 
 ## Status Flow for This Sprint
 
