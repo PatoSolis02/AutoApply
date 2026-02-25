@@ -185,6 +185,14 @@ Allowed transitions:
 }
 ```
 
+Selection semantics for MVP:
+
+1. `selected_experience_ids`, `selected_project_ids`, and `selected_skill_keywords` are model-selected outputs.
+2. The generator must consume full saved profile data plus the target job posting as input.
+3. Manual user field-by-field selection is not required for MVP generation.
+4. Output format must conform to the generation template contract and visually align to:
+- `artifacts/resume_samples/Redacted Resume.pdf`
+
 ## API Contract (v1)
 
 Base path: `/api/v1`
@@ -202,6 +210,7 @@ Base path: `/api/v1`
   - Enforces state transition rules.
 - `POST /applications/{application_id}/resume-versions/generate`
   - Request: `template_id`.
+  - Runtime input contract: server-side generation uses full user profile + target job posting context.
   - Response: `201` with `resume_version_id`, `warnings`, `blocked_reasons`.
   - Hard fail if unsupported claims exist.
 - `GET /applications/{application_id}/resume-versions`

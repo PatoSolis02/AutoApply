@@ -9,7 +9,7 @@ The system enables users to:
 - Create an account and log in
 - Capture real job postings (LinkedIn-first)
 - Ingest a resume and auto-fill a structured profile
-- Generate truthful, tailored resumes per job with explicit user control
+- Generate truthful, tailored resumes per job from full profile + job context
 - Track applications through core status stages
 
 The system never auto-submits applications and never fabricates information.
@@ -27,12 +27,8 @@ MVP users: individual job seekers applying to Software Engineering roles.
 - experiences
 - projects
 - skills
-5. User reviews/edits profile and chooses inputs for tailoring:
-- selected experiences
-- selected projects
-- selected skills
-- target keywords
-6. User generates a tailored resume for the selected job.
+5. User reviews/edits profile (experiences/projects/skills).
+6. User generates a tailored resume for the selected job; LLM receives full saved profile + job data and selects relevant evidence automatically.
 7. User reviews output and manually applies externally.
 8. User tracks application status in AutoApply.
 
@@ -41,8 +37,8 @@ MVP users: individual job seekers applying to Software Engineering roles.
 - Account creation, login, and user-session continuity
 - Reliable real-job capture with actionable failure messages
 - Resume ingest with profile auto-fill and editable profile sections
-- Tailored resume generation with user-controlled input selection
-- Defined and stable generated-resume format contract
+- Tailored resume generation from full profile + job inputs (no required manual selection)
+- Defined and stable generated-resume format contract anchored to `artifacts/resume_samples/Redacted Resume.pdf`
 - Application tracking with practical status transitions
 - Truth-bound claims and human approval gate preservation
 

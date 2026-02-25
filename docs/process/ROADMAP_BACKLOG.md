@@ -34,7 +34,7 @@ Gate:
 1. `MVP-P0` Account auth baseline
 - Scope: signup/login/logout/session persistence; per-user data boundary.
 - Why now: user-facing MVP requires account and login as entry point.
-- Linear: `AUT-28`.
+- Linear: `AUT-28` (umbrella), `AUT-34`, `AUT-35`, `AUT-36`.
 
 2. `MVP-P0` Resume ingest -> profile auto-fill + editable sections
 - Scope: parse resume and auto-populate profile sections (experiences/projects/skills), with user edits persisted.
@@ -43,11 +43,11 @@ Gate:
 - Linear: `AUT-29`.
 
 3. `MVP-P0` Controlled tailored generation contract
-- Scope: user chooses skills/projects/experiences/keywords for a specific job generation request.
-- Also required: explicit generated resume format contract/template.
+- Scope: LLM receives full saved profile data (skills/projects/experiences) plus job data and automatically selects best-fit evidence.
+- Also required: explicit generated resume format contract/template based on `artifacts/resume_samples/Redacted Resume.pdf`.
 - Why now: directly maps to MVP value proposition.
 - Builds on: `AUT-15` generation foundation.
-- Linear: `AUT-30`.
+- Linear: `AUT-30` (umbrella), `AUT-37`, `AUT-38`.
 
 4. `MVP-P0` Core tracking usability and correctness
 - Scope: create/update/view core application statuses with practical user workflow coverage.
@@ -66,6 +66,7 @@ Gate:
 
 7. `MVP-P1` Resume parser quality hardening for common resume variants
 - Scope: improve extraction reliability for core profile fields used in generation controls.
+- Linear: `AUT-39` (fixture expansion/eval harness).
 
 ## Post-MVP Queue
 
@@ -106,6 +107,12 @@ Sprint 08:
 2. Add `MVP-P1` only if no `MVP-P0` is blocked by missing dependencies.
 3. Keep thread scopes non-overlapping; one owner per task.
 4. Reserve `POST-MVP` for explicitly approved exceptions.
+
+## Story Decomposition Policy
+
+1. Keep umbrella stories for outcome tracking (for example `AUT-28`, `AUT-30`).
+2. Execute delivery through smaller implementation stories with clear boundaries (for example `AUT-34` to `AUT-39`).
+3. Prefer stories that can be completed in one thread without cross-owner overlap.
 
 ## Working Backlog Rules
 

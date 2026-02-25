@@ -10,7 +10,7 @@ Ship a usable, human-in-the-loop job-application assistant where a user can:
 1. Create an account and log in.
 2. Reliably capture a real job posting.
 3. Ingest a resume and auto-fill profile sections.
-4. Generate a tailored resume for a specific job with explicit user controls.
+4. Generate a tailored resume for a specific job using full profile + job context.
 5. Manually apply using the generated resume.
 6. Track application status end-to-end.
 
@@ -36,8 +36,12 @@ Ship a usable, human-in-the-loop job-application assistant where a user can:
 
 4. Tailored resume generation
 - generate resume for one selected application/job
-- user can choose which experiences/projects/skills/keywords to include
+- LLM receives full saved profile data (experiences/projects/skills) plus job posting data
+- model automatically selects and prioritizes the most relevant profile evidence
 - output format is explicitly defined and stable (template/section contract)
+- output format must mirror the baseline style from:
+  - `artifacts/resume_samples/Redacted Resume.pdf`
+- additional redacted sample variants can be added under `artifacts/resume_samples/` for parser/generation quality hardening
 - claims remain truth-bound to user-provided/source-backed data
 
 5. Human-in-the-loop apply
@@ -63,7 +67,7 @@ MVP is complete only when all are true:
 1. New user can sign up, sign in, and keep a working session.
 2. User can capture at least one real job posting and see it persisted.
 3. User can upload a resume and see profile sections auto-filled (experiences/projects/skills), then edit and save.
-4. User can generate a tailored resume for that job with selectable inputs (skills/projects/experiences/keywords).
+4. User can generate a tailored resume for that job from full profile + job inputs without manual selection requirements.
 5. Generated resume format is consistent with a documented contract/template.
 6. User can move the application through tracking statuses after manual apply.
 
