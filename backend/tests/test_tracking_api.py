@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection
 from typing import Any
 
@@ -55,6 +56,21 @@ class TrackingApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 201)
         return body["application_id"]
+
+    def _seed_resume_versions(self, application_id: str, *, total: int) -> list[str]:
+        ids: list[str] = []
+        base_time = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+        for index in range(total):
+            version_id = self.db.insert_resume_version(
+                application_id=application_id,
+                template_id="modern",
+                render_model_json={},
+                change_log={"added": [], "removed": [], "reworded": []},
+                claims_map=[],
+                created_at=(base_time + timedelta(minutes=index)).isoformat(),
+            )
+            ids.append(version_id)
+        return ids
 
     def test_get_applications_returns_paginated_items(self) -> None:
         self._capture_application(company="Acme")
@@ -305,6 +321,83 @@ class TrackingApiTests(unittest.TestCase):
         status, body = self._request_json("GET", f"/api/v1/applications/{application_id}")
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "ready_to_apply")
+
+    def test_audit_export_large_history_applies_default_limit(self) -> None:
+        application_id = self._capture_application()
+        version_ids = self._seed_resume_versions(application_id, total=620)
+
+        status, body = self._request_json("GET", f"/api/v1/applications/{application_id}/audit-export")
+        self.assertEqual(status, 200)
+
+        page = body["resume_versions_page"]
+        returned = len(body["resume_versions"])
+        self.assertEqual(page["offset"], 0)
+        self.assertEqual(page["total"], 620)
+        self.assertEqual(page["returned"], returned)
+        self.assertEqual(page["limit"], returned)
+        self.assertTrue(page["has_more"])
+        self.assertEqual(body["resume_versions"][0]["id"], version_ids[0])
+        self.assertEqual(body["resume_versions"][-1]["id"], version_ids[returned - 1])
+        self.assertEqual(
+            page["limit"],
+            body["export_limits"]["default_resume_versions_limit"],
+        )
+
+    def test_audit_export_supports_explicit_limit_and_offset(self) -> None:
+        application_id = self._capture_application()
+        version_ids = self._seed_resume_versions(application_id, total=320)
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_limit=120&resume_versions_offset=150",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["id"] for item in body["resume_versions"]], version_ids[150:270])
+        self.assertEqual(body["resume_versions_page"]["limit"], 120)
+        self.assertEqual(body["resume_versions_page"]["offset"], 150)
+        self.assertEqual(body["resume_versions_page"]["returned"], 120)
+        self.assertEqual(body["resume_versions_page"]["total"], 320)
+        self.assertTrue(body["resume_versions_page"]["has_more"])
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_limit=120&resume_versions_offset=300",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([item["id"] for item in body["resume_versions"]], version_ids[300:320])
+        self.assertEqual(body["resume_versions_page"]["returned"], 20)
+        self.assertFalse(body["resume_versions_page"]["has_more"])
+
+    def test_audit_export_rejects_invalid_limit_parameters(self) -> None:
+        application_id = self._capture_application()
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_limit=0",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("resume_versions_limit must be a positive integer", body["detail"])
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_limit=oops",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("resume_versions_limit must be a positive integer", body["detail"])
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_offset=-1",
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("resume_versions_offset must be a non-negative integer", body["detail"])
+
+        status, body = self._request_json(
+            "GET",
+            f"/api/v1/applications/{application_id}/audit-export?resume_versions_limit=9999",
+        )
+        self.assertEqual(status, 422)
+        self.assertIn("resume_versions_limit exceeds maximum", body["detail"])
 
     def test_endpoints_return_404_for_missing_entities(self) -> None:
         status, body = self._request_json("GET", "/api/v1/applications/missing")
