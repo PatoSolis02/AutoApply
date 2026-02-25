@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 
 from autoapply.contracts import (
+    EducationEntry,
     ExperienceEntry,
     JobPosting,
     ProjectEntry,
@@ -88,6 +89,7 @@ class TailoringEngine:
             selected_project_ids=[entry.id for entry in selected_projects],
             selected_skill_keywords=self._select_skills(profile.skills, job_terms),
             sections={
+                "education": self._build_education_sections(profile.education),
                 "experience": exp_sections,
                 "projects": project_sections,
             },
@@ -174,3 +176,52 @@ class TailoringEngine:
         if not matched:
             matched = list(profile_skills)
         return _dedupe_keep_order(matched)[: self._config.max_skill_keywords]
+
+    def _build_education_sections(self, entries: list[EducationEntry]) -> list[RenderSectionEntry]:
+        sections: list[RenderSectionEntry] = []
+        for entry in entries:
+            line = self._education_summary_line(entry)
+            if not line:
+                continue
+            sections.append(
+                RenderSectionEntry(
+                    entry_id=entry.id,
+                    bullets=[RenderBullet(id=f"education:{entry.id}:0", text=line)],
+                )
+            )
+        return sections
+
+    def _education_summary_line(self, entry: EducationEntry) -> str:
+        details: list[str] = []
+        school = (entry.school or "").strip()
+        if school:
+            details.append(school)
+
+        degree_bits = [value.strip() for value in (entry.degree or "", entry.field or "") if value and value.strip()]
+        if degree_bits:
+            details.append(", ".join(degree_bits))
+
+        date_range = self._format_date_range(entry.start_date, entry.end_date)
+        if date_range:
+            details.append(date_range)
+
+        return " | ".join(details)
+
+    def _format_date_range(self, start_date: str | None, end_date: str | None) -> str:
+        start = self._format_month_year(start_date)
+        end = self._format_month_year(end_date)
+        if start and end:
+            return f"{start} - {end}"
+        if start and not end:
+            return f"{start} - Present"
+        if end and not start:
+            return f"Through {end}"
+        return ""
+
+    def _format_month_year(self, value: str | None) -> str:
+        if not value:
+            return ""
+        raw = value.strip()
+        if len(raw) >= 7 and raw[4] == "-":
+            return raw[:7]
+        return raw

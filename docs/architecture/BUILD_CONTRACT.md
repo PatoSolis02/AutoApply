@@ -42,6 +42,9 @@ Baseline rules:
 Prompt and provider version contract details are specified in:
 - `docs/architecture/LLM_FOUNDATION_CONTRACT.md`
 
+Generated resume output format and section-order contract details are specified in:
+- `docs/architecture/GENERATION_FORMAT_CONTRACT.md`
+
 ## Canonical Data Contracts
 
 ### Application

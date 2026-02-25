@@ -5,6 +5,13 @@ import textwrap
 from pathlib import Path
 
 from autoapply.contracts import RenderModel
+from autoapply.generation_format_contract import (
+    GENERATED_RESUME_FORMAT_BASELINE,
+    GENERATED_RESUME_FORMAT_CONTRACT_VERSION,
+    assert_render_model_conforms,
+    ordered_output_sections,
+    section_heading,
+)
 
 
 class ArtifactWriter:
@@ -18,6 +25,8 @@ class ArtifactWriter:
         resume_version_id: str,
         render_model: RenderModel,
     ) -> tuple[str, str]:
+        assert_render_model_conforms(render_model)
+
         relative_dir = Path(self._artifacts_root) / application_id
         absolute_dir = self._workspace_root / relative_dir
         absolute_dir.mkdir(parents=True, exist_ok=True)
@@ -36,23 +45,8 @@ class ArtifactWriter:
         return html_relative.as_posix(), pdf_relative.as_posix()
 
     def _render_html(self, model: RenderModel) -> str:
-        exp_html = "\n".join(
-            [
-                "<li><ul>"
-                + "".join([f"<li>{html.escape(bullet.text)}</li>" for bullet in section.bullets])
-                + "</ul></li>"
-                for section in model.sections.get("experience", [])
-            ]
-        )
-        proj_html = "\n".join(
-            [
-                "<li><ul>"
-                + "".join([f"<li>{html.escape(bullet.text)}</li>" for bullet in section.bullets])
-                + "</ul></li>"
-                for section in model.sections.get("projects", [])
-            ]
-        )
-        skills_html = "".join([f"<li>{html.escape(skill)}</li>" for skill in model.selected_skill_keywords])
+        section_blocks = [self._render_html_section(model, section_key) for section_key in ordered_output_sections(model)]
+        rendered_sections = "\n".join(block for block in section_blocks if block)
 
         return "\n".join(
             [
@@ -61,16 +55,19 @@ class ArtifactWriter:
                 "<head>",
                 "  <meta charset=\"utf-8\">",
                 "  <title>AutoApply Resume</title>",
+                (
+                    "  <meta name=\"autoapply-resume-format-contract\" "
+                    f"content=\"{html.escape(GENERATED_RESUME_FORMAT_CONTRACT_VERSION)}\">"
+                ),
+                (
+                    "  <meta name=\"autoapply-resume-format-baseline\" "
+                    f"content=\"{html.escape(GENERATED_RESUME_FORMAT_BASELINE)}\">"
+                ),
                 "</head>",
                 "<body>",
                 f"  <h1>{html.escape(model.headline)}</h1>",
                 f"  <p>{html.escape(model.summary)}</p>",
-                "  <h2>Experience</h2>",
-                f"  <ul>{exp_html}</ul>",
-                "  <h2>Projects</h2>",
-                f"  <ul>{proj_html}</ul>",
-                "  <h2>Skills</h2>",
-                f"  <ul>{skills_html}</ul>",
+                rendered_sections,
                 "</body>",
                 "</html>",
             ]
@@ -81,25 +78,34 @@ class ArtifactWriter:
         lines.append(model.headline)
         if model.summary:
             lines.append(model.summary)
-        lines.append("Experience")
-        for section in model.sections.get("experience", []):
-            lines.append(f"- {section.entry_id}")
-            for bullet in section.bullets:
-                lines.append(f"  * {bullet.text}")
-        lines.append("Projects")
-        for section in model.sections.get("projects", []):
-            lines.append(f"- {section.entry_id}")
-            for bullet in section.bullets:
-                lines.append(f"  * {bullet.text}")
-        lines.append("Skills")
-        for skill in model.selected_skill_keywords:
-            lines.append(f"- {skill}")
+        for section_key in ordered_output_sections(model):
+            lines.append(section_heading(section_key))
+            if section_key == "skills":
+                for skill in model.selected_skill_keywords:
+                    lines.append(f"- {skill}")
+                continue
+            for section in model.sections.get(section_key, []):
+                for bullet in section.bullets:
+                    lines.append(f"- {bullet.text}")
 
         wrapped: list[str] = []
         for line in lines:
             parts = textwrap.wrap(line, width=88) or [""]
             wrapped.extend(parts)
         return wrapped
+
+    def _render_html_section(self, model: RenderModel, section_key: str) -> str:
+        heading = section_heading(section_key)
+        if section_key == "skills":
+            skill_items = "".join(f"<li>{html.escape(skill)}</li>" for skill in model.selected_skill_keywords)
+            return f"  <h2>{html.escape(heading)}</h2>\n  <ul>{skill_items}</ul>"
+
+        entries = model.sections.get(section_key, [])
+        entry_items = []
+        for section in entries:
+            bullet_items = "".join(f"<li>{html.escape(bullet.text)}</li>" for bullet in section.bullets)
+            entry_items.append(f"<li><ul>{bullet_items}</ul></li>")
+        return f"  <h2>{html.escape(heading)}</h2>\n  <ul>{''.join(entry_items)}</ul>"
 
     def _build_deterministic_pdf(self, lines: list[str]) -> bytes:
         content = ["BT", "/F1 11 Tf", "50 760 Td"]
