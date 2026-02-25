@@ -1,0 +1,43 @@
+<html>
+  <head>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "JobPosting",
+            "title": "Unrelated Job",
+            "identifier": {
+              "@type": "PropertyValue",
+              "value": "111111"
+            },
+            "url": "https://www.linkedin.com/jobs/view/111111",
+            "description": "This description should not be selected for extraction.",
+            "hiringOrganization": {
+              "name": "Other Company"
+            }
+          },
+          {
+            "@type": "JobPosting",
+            "title": "Principal Reliability Engineer",
+            "identifier": {
+              "@type": "PropertyValue",
+              "value": "992233"
+            },
+            "url": "https://www.linkedin.com/jobs/view/992233",
+            "jobLocationType": "TELECOMMUTE",
+            "description": "Lead production reliability initiatives, improve incident automation, and ship measurable improvements across distributed platform systems.",
+            "hiringOrganization": {
+              "legalName": "Summit Works"
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <main class="jobs-search-two-pane__job-details">
+      <h1>Principal Reliability Engineer</h1>
+    </main>
+  </body>
+</html>

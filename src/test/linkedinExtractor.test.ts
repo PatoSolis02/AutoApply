@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import activeListCardFixture from './fixtures/linkedin/active-list-card.html?raw';
+import activeListDataJobIdFixture from './fixtures/linkedin/active-list-data-job-id.html?raw';
 import jsonLdGraphFixture from './fixtures/linkedin/jsonld-graph.html?raw';
+import jsonLdMultiPostingFixture from './fixtures/linkedin/jsonld-multi-posting-current-id.html?raw';
 import modernTopCardFixture from './fixtures/linkedin/modern-top-card.html?raw';
 import topCardTextCompanyMetaFixture from './fixtures/linkedin/top-card-text-company-meta-description.html?raw';
 import twoPanePanelFixture from './fixtures/linkedin/two-pane-panel.html?raw';
@@ -33,14 +35,14 @@ function installDom(html: string, title: string, url: string) {
   window.history.replaceState({}, '', url);
 }
 
-function runExtractMessage(): Promise<ExtractResponse> {
+function runExtractMessage(options?: { timeoutMs?: number; intervalMs?: number }): Promise<ExtractResponse> {
   if (!listener) {
     throw new Error('Extractor listener was not initialized.');
   }
   const activeListener = listener;
 
   return new Promise((resolve) => {
-    const handledAsAsync = activeListener({ type: 'EXTRACT_JOB' }, {}, (response) => resolve(response));
+    const handledAsAsync = activeListener({ type: 'EXTRACT_JOB', ...options }, {}, (response) => resolve(response));
     if (handledAsAsync !== true) {
       resolve({ ok: false, error: 'Extractor listener did not return async response handle.' });
     }
@@ -113,7 +115,7 @@ describe('LinkedIn extractor fixtures', () => {
       title: 'Platform Engineer',
       company: 'Northwind Systems',
       location: 'Remote',
-      job_url: 'https://www.linkedin.com/jobs/view/4132/',
+      job_url: 'https://www.linkedin.com/jobs/view/4132',
     });
     expect(response.data?.description_raw).toContain('distributed systems');
   });
@@ -131,7 +133,7 @@ describe('LinkedIn extractor fixtures', () => {
       title: 'Senior Reliability Engineer',
       company: 'Nimbus Labs',
       location: 'Austin, TX',
-      job_url: 'https://www.linkedin.com/jobs/view/60012/?trackingId=abc',
+      job_url: 'https://www.linkedin.com/jobs/view/60012',
     });
     expect(response.data?.description_raw.toLowerCase()).toContain('about the job');
   });
@@ -149,7 +151,7 @@ describe('LinkedIn extractor fixtures', () => {
       title: 'Lead Site Reliability Engineer',
       company: 'Harbor Tech',
       location: 'Boston, MA',
-      job_url: 'https://www.linkedin.com/jobs/view/777888/?refId=feed',
+      job_url: 'https://www.linkedin.com/jobs/view/777888',
     });
     expect(response.data?.description_raw.toLowerCase()).toContain('incident response');
   });
@@ -170,5 +172,53 @@ describe('LinkedIn extractor fixtures', () => {
       job_url: 'https://www.linkedin.com/jobs/view/889977',
     });
     expect(response.data?.description_raw).toContain('streaming data platform');
+  });
+
+  it('selects matching JobPosting JSON-LD entry by currentJobId when multiple postings are present', async () => {
+    installDom(
+      jsonLdMultiPostingFixture,
+      'LinkedIn',
+      'https://www.linkedin.com/jobs/search/?currentJobId=992233&keywords=reliability',
+    );
+
+    const response = await runExtractMessage();
+    expect(response.ok).toBe(true);
+    expect(response.data).toMatchObject({
+      title: 'Principal Reliability Engineer',
+      company: 'Summit Works',
+      location: 'Remote',
+      job_url: 'https://www.linkedin.com/jobs/view/992233',
+    });
+    expect(response.data?.description_raw).toContain('production reliability');
+  });
+
+  it('uses active-card data job id and top-card inline metadata fallback on search layouts', async () => {
+    installDom(
+      activeListDataJobIdFixture,
+      'LinkedIn',
+      'https://www.linkedin.com/jobs/search/?keywords=data',
+    );
+
+    const response = await runExtractMessage();
+    expect(response.ok).toBe(true);
+    expect(response.data).toMatchObject({
+      title: 'Data Platform Engineer',
+      company: 'Cedar Analytics',
+      location: 'Denver, CO',
+      job_url: 'https://www.linkedin.com/jobs/view/445566',
+    });
+    expect(response.data?.description_raw).toContain('data platform tooling');
+  });
+
+  it('returns deterministic recovery guidance when required fields are still missing', async () => {
+    installDom('<html><head></head><body><main>No job detail loaded.</main></body></html>', 'LinkedIn', 'https://www.linkedin.com/jobs/search/');
+
+    const response = await runExtractMessage({ timeoutMs: 0 });
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain('Could not extract required fields');
+    expect(response.error).toContain('title');
+    expect(response.error).toContain('company');
+    expect(response.error).toContain('description');
+    expect(response.error).toContain('manual capture form');
   });
 });

@@ -21,12 +21,60 @@ function initialFormState(): CaptureFormState {
   };
 }
 
+interface ValidationErrorDetail {
+  field?: unknown;
+  message?: unknown;
+}
+
+function readValidationErrors(payload: unknown): ValidationErrorDetail[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const errors = (payload as { errors?: unknown }).errors;
+  if (!Array.isArray(errors)) return [];
+  return errors.filter((entry) => entry && typeof entry === 'object') as ValidationErrorDetail[];
+}
+
+function formatFieldName(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const value = raw.trim();
+  if (!value) return '';
+  if (value === 'description_raw') return 'description';
+  if (value === 'job_url') return 'job URL';
+  return value.replace(/_/g, ' ');
+}
+
+function fieldRecoveryHint(field: string): string {
+  if (field === 'title') return 'Add the role title from the posting header.';
+  if (field === 'company') return 'Add the company name shown near the role title.';
+  if (field === 'job URL') return 'Paste the full job posting URL (LinkedIn jobs/view link preferred).';
+  if (field === 'description') return 'Paste the responsibilities/requirements section from the posting.';
+  if (field === 'captured at') return 'Retry capture; timestamp is generated automatically.';
+  return 'Review the field value and retry.';
+}
+
+function toStructured400Message(error: ApiError): string | null {
+  const errors = readValidationErrors(error.payload);
+  if (errors.length === 0) return null;
+
+  const formatted = errors
+    .map((entry) => {
+      const field = formatFieldName(entry.field);
+      if (!field) return '';
+      return `${field}: ${fieldRecoveryHint(field)}`;
+    })
+    .filter(Boolean);
+
+  if (formatted.length === 0) return null;
+  return `Capture payload is missing or invalid. Recovery: ${formatted.join(' ')}`;
+}
+
 function toCaptureErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) {
     return 'Capture did not complete. Review required fields and try again.';
   }
 
   if (error.status === 400) {
+    const structured = toStructured400Message(error);
+    if (structured) return structured;
     return 'Capture payload is missing or invalid. Confirm role, company, job URL, and description.';
   }
 
