@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, Optional, Tuple, Union
 from uuid import uuid4
 
 
@@ -50,10 +51,18 @@ class CaptureDatabase:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        conn = self.connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def init_schema(self) -> None:
         migration_dir = Path(__file__).resolve().parent.parent / "migrations"
         migration_paths = sorted(migration_dir.glob("*.sql"))
-        with self.connect() as conn:
+        with self.connection() as conn:
             for path in migration_paths:
                 conn.executescript(path.read_text(encoding="utf-8"))
             conn.commit()
@@ -73,7 +82,7 @@ class CaptureDatabase:
         application_id = str(uuid4())
         job_posting_id = str(uuid4())
 
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO applications (
@@ -135,7 +144,7 @@ class CaptureDatabase:
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         offset = (page - 1) * page_size
 
-        with self.connect() as conn:
+        with self.connection() as conn:
             total_row = conn.execute(
                 f"SELECT COUNT(*) AS total FROM applications {where_clause}",
                 tuple(params),
@@ -157,7 +166,7 @@ class CaptureDatabase:
         return [self._row_to_application(row) for row in rows], total
 
     def get_application(self, application_id: str) -> dict[str, Any]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, company, role_title, job_url, job_source, location,
@@ -172,7 +181,7 @@ class CaptureDatabase:
         return self._row_to_application(row)
 
     def get_job_posting_for_application(self, application_id: str) -> dict[str, Any]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, application_id, raw_text, structured_json, captured_at
@@ -203,7 +212,7 @@ class CaptureDatabase:
         updated_at: Optional[str] = None,
     ) -> None:
         profile_updated_at = updated_at or _utc_now_iso()
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO user_profiles (
@@ -236,7 +245,7 @@ class CaptureDatabase:
             conn.commit()
 
     def get_user_profile(self) -> dict[str, Any]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, full_name, headline, summary, experiences_json, projects_json,
@@ -263,7 +272,7 @@ class CaptureDatabase:
         }
 
     def list_resume_versions_for_application(self, application_id: str) -> list[dict[str, Any]]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             rows = conn.execute(
                 """
                 SELECT id, application_id, template_id, pdf_path, rendered_html_path,
@@ -281,7 +290,7 @@ class CaptureDatabase:
         return [self._to_resume_timeline(version) for version in self.list_resume_versions_for_application(application_id)]
 
     def get_latest_resume_version_for_application(self, application_id: str) -> Optional[dict[str, Any]]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, application_id, template_id, pdf_path, rendered_html_path,
@@ -305,7 +314,7 @@ class CaptureDatabase:
         return self._to_resume_timeline(latest)
 
     def get_resume_version(self, resume_version_id: str) -> dict[str, Any]:
-        with self.connect() as conn:
+        with self.connection() as conn:
             row = conn.execute(
                 """
                 SELECT id, application_id, template_id, pdf_path, rendered_html_path,
@@ -336,7 +345,7 @@ class CaptureDatabase:
         created_at: str,
     ) -> None:
         self.get_application(application_id)
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO resume_versions (
@@ -401,7 +410,7 @@ class CaptureDatabase:
 
         effective_approved_at = approved_at or current["approval"].get("approved_at") or _utc_now_iso()
 
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE resume_versions
@@ -426,7 +435,7 @@ class CaptureDatabase:
                     "approval gate failed: latest resume version must be approved before ready_to_apply"
                 )
 
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE applications
@@ -440,7 +449,7 @@ class CaptureDatabase:
 
     def update_application_status(self, application_id: str, target_status: str, *, updated_at: str) -> dict[str, Any]:
         self.get_application(application_id)
-        with self.connect() as conn:
+        with self.connection() as conn:
             conn.execute(
                 """
                 UPDATE applications

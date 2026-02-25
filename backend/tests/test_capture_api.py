@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import unittest
+from contextlib import closing
 from http.client import HTTPConnection
 
 from app.main import create_server
@@ -91,7 +92,7 @@ class CaptureApiTests(unittest.TestCase):
         self.assertIn("application_id", body)
         self.assertIn("job_posting_id", body)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             app_row = conn.execute(
                 "SELECT company, role_title, job_source, status, location FROM applications WHERE id = ?",
                 (body["application_id"],),
