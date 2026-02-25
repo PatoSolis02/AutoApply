@@ -26,4 +26,4 @@ Implemented backend auth/session primitives with deterministic token/session fai
 3. `session_expired` behavior is explicit: expired session returns `401` and is revoked in persistence.
 
 ## Commit
-- `PENDING`
+- `6cf5333`
