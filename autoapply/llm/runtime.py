@@ -5,6 +5,7 @@ from typing import Callable, Generic, TypeVar
 
 from autoapply.llm.config import LlmConfig
 from autoapply.llm.providers import (
+    LlmProviderClient,
     LlmProviderError,
     LlmRequest,
     LlmResponse,
@@ -51,22 +52,21 @@ class LlmRuntime:
         temperature: float = 0.0,
     ) -> LlmExecutionResult[T]:
         prompt_version = self._config.prompt_version_for(workflow)
-        fallback = lambda reason: self._deterministic_result(
-            reason=reason,
-            prompt_version=prompt_version,
-            deterministic_fn=deterministic_fn,
-        )
-
-        if not self._config.enabled:
-            return fallback("llm_disabled")
-        if self._config.provider == "none":
-            return fallback("provider_not_selected")
-        if not self._config.provider_ready():
-            return fallback("provider_not_configured")
+        deterministic_reason = self._resolve_deterministic_reason()
+        if deterministic_reason is not None:
+            return self._deterministic_result(
+                reason=deterministic_reason,
+                prompt_version=prompt_version,
+                deterministic_fn=deterministic_fn,
+            )
 
         client = self._provider_registry.create(self._config)
         if client is None:
-            return fallback("provider_unavailable")
+            return self._deterministic_result(
+                reason="provider_unavailable",
+                prompt_version=prompt_version,
+                deterministic_fn=deterministic_fn,
+            )
 
         request = LlmRequest(
             prompt=PromptSpec(workflow=workflow, version=prompt_version),
@@ -75,17 +75,28 @@ class LlmRuntime:
             temperature=temperature,
             timeout_seconds=self._config.timeout_seconds,
         )
-        try:
-            response = client.complete(request)
-        except LlmProviderError:
-            return fallback("provider_error")
-        except Exception:
-            return fallback("provider_exception")
+        response, fallback_reason = self._complete_request(client=client, request=request)
+        if fallback_reason is not None:
+            return self._deterministic_result(
+                reason=fallback_reason,
+                prompt_version=prompt_version,
+                deterministic_fn=deterministic_fn,
+            )
+        if response is None:
+            return self._deterministic_result(
+                reason="provider_exception",
+                prompt_version=prompt_version,
+                deterministic_fn=deterministic_fn,
+            )
 
         try:
             transformed = llm_transform(response)
         except Exception:
-            return fallback("provider_exception")
+            return self._deterministic_result(
+                reason="provider_exception",
+                prompt_version=prompt_version,
+                deterministic_fn=deterministic_fn,
+            )
 
         return LlmExecutionResult(
             value=transformed,
@@ -97,6 +108,28 @@ class LlmRuntime:
                 prompt_version=prompt_version,
             ),
         )
+
+    def _resolve_deterministic_reason(self) -> str | None:
+        if not self._config.enabled:
+            return "llm_disabled"
+        if self._config.provider == "none":
+            return "provider_not_selected"
+        if not self._config.provider_ready():
+            return "provider_not_configured"
+        return None
+
+    def _complete_request(
+        self,
+        *,
+        client: LlmProviderClient,
+        request: LlmRequest,
+    ) -> tuple[LlmResponse | None, str | None]:
+        try:
+            return client.complete(request), None
+        except LlmProviderError:
+            return None, "provider_error"
+        except Exception:
+            return None, "provider_exception"
 
     def _deterministic_result(
         self,
