@@ -1,6 +1,6 @@
 # Process Docs Index
 
-Last updated: 2026-02-24
+Last updated: 2026-02-25
 Owner: Integration/Product thread
 
 ## Purpose
@@ -24,6 +24,12 @@ Use it first, then open the specific process doc for the task at hand.
 
 5. `docs/process/TOOLING_BASELINE.md`
 - Runtime baseline plus canonical verification commands.
+
+## Companion Operational Docs
+
+1. `docs/release/RELEASE_RUNBOOK.md`
+- Canonical packaging/release runbook for backend, frontend, and extension artifacts.
+- This replaces ad-hoc release command examples from historical sprint handoffs/reflections.
 
 ## Sprint Artifact Layout (Canonical)
 
