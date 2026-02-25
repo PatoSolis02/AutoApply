@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.parser import BytesParser
 from email.policy import default as email_policy_default
+import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,7 +31,12 @@ from .resume_ingest import (
     parse_resume_upload,
 )
 from .runtime_generation import SqliteGenerateRepository
-from .schemas import validate_capture_payload, validate_user_profile_payload
+from .schemas import (
+    validate_auth_login_payload,
+    validate_auth_signup_payload,
+    validate_capture_payload,
+    validate_user_profile_payload,
+)
 
 from autoapply.api import ApiError, handle_generate_resume_version
 from autoapply.artifacts import ArtifactWriter
@@ -46,12 +56,19 @@ _RESUME_VERSION_APPROVE_PATTERN = re.compile(r"^/api/v1/resume-versions/([^/]+)/
 _PROFILE_PATH = "/api/v1/profile"
 _PROFILE_RESUME_PARSE_PATH = "/api/v1/profile/resume-parse"
 _PROFILE_RESUME_PARSE_LEGACY_PATH = "/api/v1/profile/ingest"
+_AUTH_SIGNUP_PATH = "/api/v1/auth/signup"
+_AUTH_LOGIN_PATH = "/api/v1/auth/login"
+_AUTH_LOGOUT_PATH = "/api/v1/auth/logout"
+_AUTH_SESSION_PATH = "/api/v1/auth/session"
 _HEALTH_PATH = "/health"
 _REQUEST_ID_HEADER = "X-Request-Id"
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _AUDIT_EXPORT_DEFAULT_RESUME_VERSIONS_LIMIT = 250
 _AUDIT_EXPORT_MAX_RESUME_VERSIONS_LIMIT = 500
 _AUDIT_EXPORT_RESUME_VERSIONS_CHUNK_SIZE = 100
+_PASSWORD_HASH_ITERATIONS = 310_000
+_PASSWORD_HASH_ALGORITHM = "sha256"
+_PASSWORD_HASH_PREFIX = "pbkdf2_sha256"
 _ALLOWED_STATUSES = {
     "captured",
     "drafting",
@@ -65,9 +82,24 @@ _LOGGER = logging.getLogger("autoapply.api")
 if not _LOGGER.handlers:
     _handler = logging.StreamHandler()
     _handler.setFormatter(logging.Formatter("%(message)s"))
-    _LOGGER.addHandler(_handler)
+_LOGGER.addHandler(_handler)
 _LOGGER.setLevel(logging.INFO)
 _LOGGER.propagate = False
+
+
+def _read_auth_session_ttl_seconds() -> int:
+    default_seconds = 60 * 60 * 12
+    raw_value = (os.environ.get("AUTOAPPLY_AUTH_SESSION_TTL_SECONDS", "") or "").strip()
+    if not raw_value:
+        return default_seconds
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default_seconds
+    return parsed if parsed > 0 else default_seconds
+
+
+_AUTH_SESSION_TTL_SECONDS = _read_auth_session_ttl_seconds()
 
 
 @dataclass
@@ -96,6 +128,8 @@ def _normalize_request_id(header_value: str | None) -> tuple[str, str]:
 def _classify_error(status: int, body: dict[str, Any]) -> str | None:
     if status < 400:
         return None
+    if status == HTTPStatus.UNAUTHORIZED:
+        return "unauthorized"
     if status == HTTPStatus.BAD_REQUEST:
         return "bad_request"
     if status == HTTPStatus.NOT_FOUND:
@@ -124,6 +158,12 @@ def _failure_reason(body: dict[str, Any]) -> str | None:
         message = errors[0].get("message")
         if isinstance(field, str) and isinstance(message, str):
             return f"{field}: {message}"
+    error = body.get("error")
+    if isinstance(error, dict):
+        code = error.get("code")
+        message = error.get("message")
+        if isinstance(code, str) and isinstance(message, str):
+            return f"{code}: {message}"
     return None
 
 
@@ -137,6 +177,97 @@ def _truncate_detail(detail: Any, *, max_len: int = 240) -> str | None:
     if len(text) <= max_len:
         return text
     return f"{text[:max_len]}...(truncated)"
+
+
+def _auth_error_response(handler: BaseHTTPRequestHandler, *, code: str, message: str) -> None:
+    _json_response(
+        handler,
+        HTTPStatus.UNAUTHORIZED,
+        {
+            "detail": message,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        },
+    )
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        _PASSWORD_HASH_ALGORITHM,
+        password.encode("utf-8"),
+        salt,
+        _PASSWORD_HASH_ITERATIONS,
+    )
+    salt_b64 = base64.b64encode(salt).decode("ascii")
+    digest_b64 = base64.b64encode(digest).decode("ascii")
+    return f"{_PASSWORD_HASH_PREFIX}${_PASSWORD_HASH_ITERATIONS}${salt_b64}${digest_b64}"
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    parts = encoded.split("$")
+    if len(parts) != 4:
+        return False
+    prefix, iterations_raw, salt_b64, digest_b64 = parts
+    if prefix != _PASSWORD_HASH_PREFIX:
+        return False
+    try:
+        iterations = int(iterations_raw)
+        salt = base64.b64decode(salt_b64.encode("ascii"))
+        expected = base64.b64decode(digest_b64.encode("ascii"))
+    except (ValueError, binascii.Error):
+        return False
+    calculated = hashlib.pbkdf2_hmac(
+        _PASSWORD_HASH_ALGORITHM,
+        password.encode("utf-8"),
+        salt,
+        iterations,
+    )
+    return hmac.compare_digest(expected, calculated)
+
+
+def _hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _new_session_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _parse_utc_datetime(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _session_expiry_iso(*, now: datetime | None = None) -> str:
+    base = now.astimezone(timezone.utc) if isinstance(now, datetime) else datetime.now(timezone.utc)
+    return (base + timedelta(seconds=_AUTH_SESSION_TTL_SECONDS)).isoformat()
+
+
+def _auth_success_payload(*, user: dict[str, Any], session: dict[str, Any], token: str) -> dict[str, Any]:
+    return {
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "created_at": user["created_at"],
+        },
+        "session": {
+            "id": session["id"],
+            "created_at": session["created_at"],
+            "expires_at": session["expires_at"],
+        },
+        "token": token,
+    }
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, body: dict[str, Any]) -> None:
@@ -170,6 +301,9 @@ def _build_handler(capture_db: CaptureDatabase):
 
             if parsed.path == _HEALTH_PATH:
                 self._handle_health()
+                return
+            if parsed.path == _AUTH_SESSION_PATH:
+                self._handle_get_auth_session()
                 return
             if parsed.path == "/api/v1/applications":
                 self._handle_list_applications(parsed.query)
@@ -220,6 +354,18 @@ def _build_handler(capture_db: CaptureDatabase):
         def do_POST(self) -> None:  # noqa: N802
             self._begin_request("POST")
             parsed = urlparse(self.path)
+
+            if parsed.path == _AUTH_SIGNUP_PATH:
+                self._handle_auth_signup()
+                return
+
+            if parsed.path == _AUTH_LOGIN_PATH:
+                self._handle_auth_login()
+                return
+
+            if parsed.path == _AUTH_LOGOUT_PATH:
+                self._handle_auth_logout()
+                return
 
             if parsed.path == "/api/v1/jobs/capture":
                 self._handle_capture()
@@ -292,6 +438,157 @@ def _build_handler(capture_db: CaptureDatabase):
 
         def _handle_health(self) -> None:
             _json_response(self, HTTPStatus.OK, {"status": "ok"})
+
+        def _handle_auth_signup(self) -> None:
+            payload = self._read_json_object()
+            if payload is None:
+                return
+
+            signup_payload, errors = validate_auth_signup_payload(payload)
+            if signup_payload is None:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"detail": "invalid request payload", "errors": errors},
+                )
+                return
+
+            try:
+                user = capture_db.create_auth_user(
+                    email=signup_payload.email,
+                    password_hash=_hash_password(signup_payload.password),
+                )
+            except DbConflictError:
+                _json_response(
+                    self,
+                    HTTPStatus.CONFLICT,
+                    {
+                        "detail": "email already registered",
+                        "error": {
+                            "code": "email_exists",
+                            "message": "email already registered",
+                        },
+                    },
+                )
+                return
+
+            token = _new_session_token()
+            session = capture_db.create_auth_session(
+                user_id=str(user["id"]),
+                token_hash=_hash_session_token(token),
+                expires_at=_session_expiry_iso(),
+            )
+            _emit_structured_log(
+                logging.INFO,
+                "auth.signup.succeeded",
+                request_id=self._request_id,
+                user_id=user["id"],
+                session_id=session["id"],
+            )
+            _json_response(
+                self,
+                HTTPStatus.CREATED,
+                _auth_success_payload(user=user, session=session, token=token),
+            )
+
+        def _handle_auth_login(self) -> None:
+            payload = self._read_json_object()
+            if payload is None:
+                return
+
+            login_payload, errors = validate_auth_login_payload(payload)
+            if login_payload is None:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"detail": "invalid request payload", "errors": errors},
+                )
+                return
+
+            try:
+                user = capture_db.get_auth_user_by_email(login_payload.email)
+            except DbNotFoundError:
+                _auth_error_response(
+                    self,
+                    code="invalid_credentials",
+                    message="Email or password is incorrect.",
+                )
+                return
+
+            stored_hash = str(user.get("password_hash", ""))
+            if not _verify_password(login_payload.password, stored_hash):
+                _auth_error_response(
+                    self,
+                    code="invalid_credentials",
+                    message="Email or password is incorrect.",
+                )
+                return
+
+            token = _new_session_token()
+            session = capture_db.create_auth_session(
+                user_id=str(user["id"]),
+                token_hash=_hash_session_token(token),
+                expires_at=_session_expiry_iso(),
+            )
+            _emit_structured_log(
+                logging.INFO,
+                "auth.login.succeeded",
+                request_id=self._request_id,
+                user_id=user["id"],
+                session_id=session["id"],
+            )
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                _auth_success_payload(user=user, session=session, token=token),
+            )
+
+        def _handle_auth_logout(self) -> None:
+            session = self._read_active_auth_session()
+            if session is None:
+                return
+            revoked = capture_db.revoke_auth_session(str(session["id"]))
+            _emit_structured_log(
+                logging.INFO,
+                "auth.logout.succeeded",
+                request_id=self._request_id,
+                user_id=revoked["user"]["id"],
+                session_id=revoked["id"],
+            )
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "session": {
+                        "id": revoked["id"],
+                        "revoked_at": revoked["revoked_at"],
+                    },
+                },
+            )
+
+        def _handle_get_auth_session(self) -> None:
+            session = self._read_active_auth_session()
+            if session is None:
+                return
+            capture_db.touch_auth_session(str(session["id"]))
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "authenticated": True,
+                    "user": {
+                        "id": session["user"]["id"],
+                        "email": session["user"]["email"],
+                        "created_at": session["user"]["created_at"],
+                    },
+                    "session": {
+                        "id": session["id"],
+                        "created_at": session["created_at"],
+                        "expires_at": session["expires_at"],
+                    },
+                },
+            )
 
         def _handle_upsert_profile(self) -> None:
             body = self._read_json_body()
@@ -783,6 +1080,71 @@ def _build_handler(capture_db: CaptureDatabase):
                 failure_reason=_failure_reason(body),
                 detail=_truncate_detail(body.get("detail")),
             )
+
+        def _read_bearer_token(self) -> str | None:
+            authorization = self.headers.get("Authorization")
+            if not isinstance(authorization, str) or not authorization.strip():
+                _auth_error_response(
+                    self,
+                    code="auth_required",
+                    message="Authorization header with Bearer token is required.",
+                )
+                return None
+
+            parts = authorization.strip().split()
+            if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+                _auth_error_response(
+                    self,
+                    code="invalid_authorization_header",
+                    message="Authorization header must use Bearer token.",
+                )
+                return None
+            return parts[1].strip()
+
+        def _read_active_auth_session(self) -> dict[str, Any] | None:
+            token = self._read_bearer_token()
+            if token is None:
+                return None
+
+            token_hash = _hash_session_token(token)
+            try:
+                session = capture_db.get_auth_session_by_token_hash(token_hash)
+            except DbNotFoundError:
+                _auth_error_response(
+                    self,
+                    code="invalid_session",
+                    message="Session is invalid or has been revoked.",
+                )
+                return None
+
+            if session.get("revoked_at"):
+                _auth_error_response(
+                    self,
+                    code="invalid_session",
+                    message="Session is invalid or has been revoked.",
+                )
+                return None
+
+            expires_at = _parse_utc_datetime(session.get("expires_at"))
+            if expires_at is None:
+                _auth_error_response(
+                    self,
+                    code="invalid_session",
+                    message="Session is invalid or has been revoked.",
+                )
+                return None
+
+            now = datetime.now(timezone.utc)
+            if expires_at <= now:
+                capture_db.revoke_auth_session(str(session["id"]), revoked_at=now.isoformat())
+                _auth_error_response(
+                    self,
+                    code="session_expired",
+                    message="Session has expired. Please log in again.",
+                )
+                return None
+
+            return session
 
         def _read_multipart_form(self) -> tuple[dict[str, str], dict[str, _UploadedFormFile]] | None:
             content_type = self.headers.get("Content-Type", "")

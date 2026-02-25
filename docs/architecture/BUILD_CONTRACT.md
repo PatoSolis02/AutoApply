@@ -197,6 +197,22 @@ Selection semantics for MVP:
 
 Base path: `/api/v1`
 
+- `POST /auth/signup`
+  - Request: `email`, `password`.
+  - Response: `201` with `user`, `session`, `token`.
+  - Conflict: `409` with `error.code=email_exists` when email is already registered.
+- `POST /auth/login`
+  - Request: `email`, `password`.
+  - Response: `200` with `user`, `session`, `token`.
+  - Failure: `401` with `error.code=invalid_credentials` for unknown email or wrong password.
+- `POST /auth/logout`
+  - Request: `Authorization: Bearer <token>`.
+  - Response: `200` with `ok=true` and revoked session metadata.
+- `GET /auth/session`
+  - Request: `Authorization: Bearer <token>`.
+  - Response: `200` with `authenticated=true`, `user`, and `session`.
+  - Expiry contract: once `expires_at <= now`, response is `401` with `error.code=session_expired` and session is revoked.
+  - Revoked/missing session token returns `401` with `error.code=invalid_session`.
 - `POST /jobs/capture`
   - Request: title, company, location, job_url, description_raw, captured_at.
   - Response: `201` with `application_id`, `job_posting_id`.
@@ -245,6 +261,7 @@ Approval gate:
 ## Error Semantics
 
 - `400`: invalid request payload.
+- `401`: auth/session failure (`auth_required`, `invalid_authorization_header`, `invalid_credentials`, `invalid_session`, `session_expired`).
 - `404`: missing resource.
 - `409`: invalid status transition.
 - `422`: unsupported claims or compliance gate failure.

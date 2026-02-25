@@ -271,6 +271,160 @@ class CaptureDatabase:
             "updated_at": row["updated_at"],
         }
 
+    def create_auth_user(self, *, email: str, password_hash: str) -> dict[str, Any]:
+        normalized_email = email.strip().lower()
+        user_id = str(uuid4())
+        now = _utc_now_iso()
+        with self.connection() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO auth_users (id, email, password_hash, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (user_id, normalized_email, password_hash, now, now),
+                )
+            except sqlite3.IntegrityError as err:
+                if "UNIQUE constraint failed: auth_users.email" in str(err):
+                    raise DbConflictError("email already registered") from err
+                raise
+            conn.commit()
+        return self.get_auth_user_by_id(user_id)
+
+    def get_auth_user_by_id(self, user_id: str) -> dict[str, Any]:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, email, password_hash, created_at, updated_at
+                FROM auth_users
+                WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            raise DbNotFoundError(f"auth user '{user_id}' not found")
+        return self._row_to_auth_user(row, include_password_hash=True)
+
+    def get_auth_user_by_email(self, email: str) -> dict[str, Any]:
+        normalized_email = email.strip().lower()
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, email, password_hash, created_at, updated_at
+                FROM auth_users
+                WHERE email = ?
+                """,
+                (normalized_email,),
+            ).fetchone()
+        if row is None:
+            raise DbNotFoundError(f"auth user '{normalized_email}' not found")
+        return self._row_to_auth_user(row, include_password_hash=True)
+
+    def create_auth_session(self, *, user_id: str, token_hash: str, expires_at: str) -> dict[str, Any]:
+        self.get_auth_user_by_id(user_id)
+        session_id = str(uuid4())
+        created_at = _utc_now_iso()
+        with self.connection() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO auth_sessions (
+                        id, user_id, token_hash, created_at, expires_at, revoked_at, last_seen_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, NULL, ?)
+                    """,
+                    (session_id, user_id, token_hash, created_at, expires_at, created_at),
+                )
+            except sqlite3.IntegrityError as err:
+                if "UNIQUE constraint failed: auth_sessions.token_hash" in str(err):
+                    raise DbConflictError("session token already exists") from err
+                raise
+            conn.commit()
+        return self.get_auth_session(session_id)
+
+    def get_auth_session(self, session_id: str) -> dict[str, Any]:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    s.id AS session_id,
+                    s.user_id AS session_user_id,
+                    s.token_hash AS token_hash,
+                    s.created_at AS session_created_at,
+                    s.expires_at AS expires_at,
+                    s.revoked_at AS revoked_at,
+                    s.last_seen_at AS last_seen_at,
+                    u.id AS user_id,
+                    u.email AS user_email,
+                    u.created_at AS user_created_at,
+                    u.updated_at AS user_updated_at
+                FROM auth_sessions s
+                INNER JOIN auth_users u ON u.id = s.user_id
+                WHERE s.id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise DbNotFoundError(f"auth session '{session_id}' not found")
+        return self._row_to_auth_session(row)
+
+    def get_auth_session_by_token_hash(self, token_hash: str) -> dict[str, Any]:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    s.id AS session_id,
+                    s.user_id AS session_user_id,
+                    s.token_hash AS token_hash,
+                    s.created_at AS session_created_at,
+                    s.expires_at AS expires_at,
+                    s.revoked_at AS revoked_at,
+                    s.last_seen_at AS last_seen_at,
+                    u.id AS user_id,
+                    u.email AS user_email,
+                    u.created_at AS user_created_at,
+                    u.updated_at AS user_updated_at
+                FROM auth_sessions s
+                INNER JOIN auth_users u ON u.id = s.user_id
+                WHERE s.token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+        if row is None:
+            raise DbNotFoundError("auth session not found")
+        return self._row_to_auth_session(row)
+
+    def touch_auth_session(self, session_id: str, *, at: Optional[str] = None) -> None:
+        timestamp = at or _utc_now_iso()
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE auth_sessions
+                SET last_seen_at = ?
+                WHERE id = ?
+                """,
+                (timestamp, session_id),
+            )
+            conn.commit()
+        if cursor.rowcount == 0:
+            raise DbNotFoundError(f"auth session '{session_id}' not found")
+
+    def revoke_auth_session(self, session_id: str, *, revoked_at: Optional[str] = None) -> dict[str, Any]:
+        timestamp = revoked_at or _utc_now_iso()
+        with self.connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE auth_sessions
+                SET revoked_at = COALESCE(revoked_at, ?)
+                WHERE id = ?
+                """,
+                (timestamp, session_id),
+            )
+            conn.commit()
+        if cursor.rowcount == 0:
+            raise DbNotFoundError(f"auth session '{session_id}' not found")
+        return self.get_auth_session(session_id)
+
     def count_resume_versions_for_application(self, application_id: str) -> int:
         with self.connection() as conn:
             row = conn.execute(
@@ -522,6 +676,39 @@ class CaptureDatabase:
             "fit_score": row["fit_score"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+        }
+
+    def _row_to_auth_user(
+        self,
+        row: sqlite3.Row | dict[str, Any],
+        *,
+        include_password_hash: bool,
+    ) -> dict[str, Any]:
+        user = {
+            "id": row["id"],
+            "email": row["email"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        if include_password_hash:
+            user["password_hash"] = row["password_hash"]
+        return user
+
+    def _row_to_auth_session(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row["session_id"],
+            "user_id": row["session_user_id"],
+            "token_hash": row["token_hash"],
+            "created_at": row["session_created_at"],
+            "expires_at": row["expires_at"],
+            "revoked_at": row["revoked_at"],
+            "last_seen_at": row["last_seen_at"],
+            "user": {
+                "id": row["user_id"],
+                "email": row["user_email"],
+                "created_at": row["user_created_at"],
+                "updated_at": row["user_updated_at"],
+            },
         }
 
     def _resume_version_from_row(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
